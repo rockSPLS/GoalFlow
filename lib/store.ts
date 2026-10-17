@@ -4,6 +4,8 @@ import { useSyncExternalStore } from "react";
 import {
   appDataSchema,
   emptyData,
+  ENTRY_MAX_MINUTES,
+  REMINDER_MS,
   TITLE_MAX,
   type AppData,
   type Goal,
@@ -11,6 +13,7 @@ import {
   type Project,
   type Status,
   type Task,
+  type TimeEntry,
   type Weight,
 } from "./model";
 
@@ -20,6 +23,19 @@ import {
 const STORAGE_KEY = "goalflow:data";
 
 const BACKUP_PREFIX = `${STORAGE_KEY}:broken:`;
+// Копия данных перед последним восстановлением из файла
+const IMPORT_BACKUP_KEY = `${STORAGE_KEY}:before-import`;
+
+// Сообщение после восстановления — к нему интерфейс добавляет кнопки «скачать прежние / отменить»
+export const IMPORT_NOTICE =
+  "Данные восстановлены из файла. Если выбран не тот файл, прежние данные можно скачать или вернуть.";
+
+// Копии в хранилище браузера: по одной каждого вида, новая заменяет старую.
+// Даты — когда копия сохранена (у копий старого формата дата неизвестна — пустая строка).
+export type Copies = {
+  beforeImport: string | null;
+  broken: { key: string; at: string } | null;
+};
 
 export type Snapshot = {
   data: AppData;
@@ -27,21 +43,87 @@ export type Snapshot = {
   notice: string | null;
   // Запись запрещена: повреждённые данные не удалось скопировать, и сохранение их бы затёрло
   locked: boolean;
+  // Ключ хранилища с повреждёнными данными для кнопки в сообщении (или null)
+  brokenKey: string | null;
+  copies: Copies;
 };
+
+// Повреждённые данные скачиваются как есть — восстановить их приложение не может,
+// но файл можно поправить вручную или показать специалисту
+export function brokenDataRaw(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function brokenKeys(): string[] {
+  const keys: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key?.startsWith(BACKUP_PREFIX)) keys.push(key);
+  }
+  return keys;
+}
+
+// Время сохранения повреждённой копии записано в её ключе
+function brokenAt(key: string): string {
+  const ms = Number(key.slice(BACKUP_PREFIX.length));
+  return Number.isFinite(ms) && ms > 0 ? new Date(ms).toISOString() : "";
+}
+
+function readCopies(): Copies {
+  try {
+    let beforeImport: string | null = null;
+    const raw = localStorage.getItem(IMPORT_BACKUP_KEY);
+    if (raw !== null) {
+      beforeImport = "";
+      try {
+        const parsed: unknown = JSON.parse(raw);
+        if (parsed && typeof parsed === "object" && "savedAt" in parsed && typeof parsed.savedAt === "string") {
+          beforeImport = parsed.savedAt;
+        }
+      } catch {
+        // дата неизвестна, копия всё равно показывается
+      }
+    }
+    // Если повреждённых копий несколько (старые версии приложения), показываем самую новую
+    const newest = brokenKeys().sort().pop();
+    return { beforeImport, broken: newest ? { key: newest, at: brokenAt(newest) } : null };
+  } catch {
+    return { beforeImport: null, broken: null };
+  }
+}
+
+function loadSnapshot(): Snapshot {
+  return { ...readStorage(), copies: readCopies() };
+}
+
+// Пересчитать список копий после изменений в хранилище. Если копия, о которой говорит сообщение,
+// исчезла (например, её удалили в другой вкладке), убираем и сообщение — его кнопки больше не работают.
+function refreshCopies() {
+  const current = getSnapshot();
+  const copies = readCopies();
+  let { notice, brokenKey } = current;
+  if (brokenKey?.startsWith(BACKUP_PREFIX) && brokenDataRaw(brokenKey) === null) {
+    brokenKey = null;
+    notice = null;
+  }
+  if (notice === IMPORT_NOTICE && copies.beforeImport === null) notice = null;
+  snapshot = { ...current, notice, brokenKey, copies };
+  emit();
+}
 
 let snapshot: Snapshot | null = null;
 const listeners = new Set<() => void>();
 
 // Ищет уже сделанную копию с тем же содержимым, чтобы не плодить копии при каждой загрузке
 function findBackup(raw: string): string | null {
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key?.startsWith(BACKUP_PREFIX) && localStorage.getItem(key) === raw) return key;
-  }
-  return null;
+  return brokenKeys().find((key) => localStorage.getItem(key) === raw) ?? null;
 }
 
-function readStorage(): Snapshot {
+function readStorage(): Omit<Snapshot, "copies"> {
   let raw: string | null;
   try {
     raw = localStorage.getItem(STORAGE_KEY);
@@ -50,9 +132,10 @@ function readStorage(): Snapshot {
       data: emptyData(),
       notice: "Хранилище браузера недоступно — данные не сохранятся после перезагрузки.",
       locked: false,
+      brokenKey: null,
     };
   }
-  if (raw === null) return { data: emptyData(), notice: null, locked: false };
+  if (raw === null) return { data: emptyData(), notice: null, locked: false, brokenKey: null };
 
   let parsed: unknown;
   try {
@@ -61,36 +144,44 @@ function readStorage(): Snapshot {
     parsed = undefined;
   }
   const result = appDataSchema.safeParse(parsed);
-  if (result.success) return { data: normalize(result.data), notice: null, locked: false };
+  if (result.success) return { data: normalize(result.data), notice: null, locked: false, brokenKey: null };
 
   // Повреждённые данные не затираем: сначала сохраняем копию под отдельным ключом
   let backupKey = findBackup(raw);
   if (backupKey === null) {
     const key = `${BACKUP_PREFIX}${Date.now()}`;
-    try {
-      localStorage.setItem(key, raw);
-      backupKey = key;
-    } catch {
-      // нет места даже для копии
+    // Храним одну повреждённую копию: новая заменяет старые, чтобы не занимать место.
+    // Если места не хватило — убираем старые копии и пробуем ещё раз.
+    for (let attempt = 0; attempt < 2 && backupKey === null; attempt++) {
+      try {
+        localStorage.setItem(key, raw);
+        backupKey = key;
+      } catch {
+        if (attempt === 0) for (const old of brokenKeys()) localStorage.removeItem(old);
+      }
     }
+    if (backupKey !== null) for (const old of brokenKeys()) if (old !== key) localStorage.removeItem(old);
   }
   if (backupKey === null) {
     return {
       data: emptyData(),
       notice:
-        "Сохранённые данные повреждены, а сделать их копию не удалось: в хранилище браузера нет места. Чтобы не затереть старые данные, изменения сейчас не сохраняются.",
+        "Сохранённые данные повреждены, а сделать их копию не удалось: в хранилище браузера нет места. Чтобы не затереть старые данные, изменения сейчас не сохраняются. Повреждённые данные можно скачать файлом.",
       locked: true,
+      // Копии нет — скачиваем прямо из основного ключа, там они и лежат
+      brokenKey: STORAGE_KEY,
     };
   }
   return {
     data: emptyData(),
-    notice: `Сохранённые данные повреждены. Их копия лежит в хранилище браузера под ключом «${backupKey}», а приложение начато с чистого листа.`,
+    notice: "Сохранённые данные повреждены, поэтому приложение начато с чистого листа. Их копия сохранена — её можно скачать файлом.",
     locked: false,
+    brokenKey: backupKey,
   };
 }
 
 // Чинит ссылки на несуществующие цели и проекты (например, после правки данных вручную),
-// чтобы задача не «потерялась»: без живого родителя она попадает во «Входящие»
+// чтобы задача не «потерялась»: без живого родителя она попадает в «Неразобранные»
 function normalize(data: AppData): AppData {
   const goalIds = new Set(data.goals.map((g) => g.id));
   const projects = data.projects.map((p) =>
@@ -102,11 +193,15 @@ function normalize(data: AppData): AppData {
     const goalId = projectId === null && t.goalId !== null && goalIds.has(t.goalId) ? t.goalId : null;
     return { ...t, projectId, goalId, relatedGoalIds: t.relatedGoalIds.filter((g) => goalIds.has(g)) };
   });
-  return { ...data, projects, tasks };
+  // Записи времени и таймер удалённой задачи не нужны
+  const taskIds = new Set(tasks.map((t) => t.id));
+  const timeEntries = data.timeEntries.filter((e) => taskIds.has(e.taskId));
+  const timer = data.timer !== null && taskIds.has(data.timer.taskId) ? data.timer : null;
+  return { ...data, projects, tasks, timeEntries, timer };
 }
 
 function getSnapshot(): Snapshot {
-  if (snapshot === null) snapshot = readStorage();
+  if (snapshot === null) snapshot = loadSnapshot();
   return snapshot;
 }
 
@@ -120,9 +215,13 @@ function emit() {
 
 // Изменения из другой вкладки с этим же приложением
 function onStorage(event: StorageEvent) {
-  if (event.key !== STORAGE_KEY) return;
-  snapshot = readStorage();
-  emit();
+  if (event.key === STORAGE_KEY) {
+    snapshot = loadSnapshot();
+    emit();
+  } else if (event.key === IMPORT_BACKUP_KEY || event.key?.startsWith(BACKUP_PREFIX)) {
+    // В другой вкладке появилась, заменилась или удалилась копия
+    refreshCopies();
+  }
 }
 
 function subscribe(listener: () => void) {
@@ -142,6 +241,8 @@ export function useStore(): Snapshot | null {
 function update(change: (data: AppData) => AppData) {
   const current = getSnapshot();
   const next = change(current.data);
+  // Изменение ничего не поменяло — сохранять и перерисовывать нечего
+  if (next === current.data) return;
   // Прежнее сообщение не теряется после первого же действия — его скрывает только пользователь
   let notice = current.notice;
   if (!current.locked) {
@@ -151,13 +252,14 @@ function update(change: (data: AppData) => AppData) {
       notice = "Не удалось сохранить изменения: хранилище браузера переполнено или недоступно.";
     }
   }
-  snapshot = { data: next, notice, locked: current.locked };
+  // Кнопка «скачать повреждённые данные» живёт вместе со своим сообщением: новое сообщение её убирает
+  snapshot = { ...current, data: next, notice, brokenKey: notice === current.notice ? current.brokenKey : null };
   emit();
 }
 
 export function dismissNotice() {
   const current = getSnapshot();
-  snapshot = { ...current, notice: null };
+  snapshot = { ...current, notice: null, brokenKey: null };
   emit();
 }
 
@@ -230,7 +332,7 @@ export function setProjectGoal(id: string, goalId: string | null) {
   update((d) => ({ ...d, projects: d.projects.map((p) => (p.id === id ? { ...p, goalId } : p)) }));
 }
 
-// Удаление проекта не удаляет задачи: они переходят к цели проекта или во «Входящие»
+// Удаление проекта не удаляет задачи: они переходят к цели проекта или в «Неразобранные»
 export function deleteProject(id: string) {
   update((d) => {
     const project = d.projects.find((p) => p.id === id);
@@ -248,6 +350,7 @@ export function deleteProject(id: string) {
 export function addTask(title: string, parent: Parent): string | null {
   const clean = cleanTitle(title);
   if (!clean) return null;
+  const createdAt = now();
   const task: Task = {
     id: newId(),
     title: clean,
@@ -255,11 +358,27 @@ export function addTask(title: string, parent: Parent): string | null {
     weight: null,
     ...parentFields(parent),
     relatedGoalIds: [],
-    createdAt: now(),
+    createdAt,
     doneAt: null,
+    statusHistory: [{ status: "todo", at: createdAt }],
   };
   update((d) => ({ ...d, tasks: [...d.tasks, task] }));
   return task.id;
+}
+
+const HISTORY_MAX = 1000;
+
+// Смена статуса задачи: дата выполнения и запись в историю статусов
+function withStatus(t: Task, status: Status, at: string): Task {
+  if (t.status === status) return t;
+  return {
+    ...t,
+    status,
+    // Дата выполнения ставится при переходе в «Готово» и сбрасывается при выходе из него
+    doneAt: status === "done" ? at : null,
+    // Самые старые записи отбрасываются, чтобы история не росла бесконечно
+    statusHistory: [...t.statusHistory, { status, at }].slice(-HISTORY_MAX),
+  };
 }
 
 function patchTask(id: string, patch: (t: Task) => Task) {
@@ -272,13 +391,27 @@ export function renameTask(id: string, title: string) {
   patchTask(id, (t) => ({ ...t, title: clean }));
 }
 
-export function setTaskStatus(id: string, status: Status) {
-  patchTask(id, (t) => ({
-    ...t,
-    status,
-    // Дата выполнения ставится при переходе в «Готово» и сбрасывается при выходе из него
-    doneAt: status === "done" ? (t.status === "done" ? t.doneAt : now()) : null,
-  }));
+export type Stopped = { taskId: string; minutes: number };
+
+// Смена статуса. Если у задачи идёт таймер, любая смена (кроме «В работе») его останавливает
+// и записывает время — возвращаются сведения об остановке для уведомления.
+export function setTaskStatus(id: string, status: Status): Stopped | null {
+  let stopped: Stopped | null = null;
+  update((d) => {
+    const task = d.tasks.find((t) => t.id === id);
+    if (!task || task.status === status) return d;
+    // Один момент времени и для конца отрезка таймера, и для записи в истории
+    const moment = new Date();
+    let base = d;
+    if (d.timer?.taskId === id && status !== "in_progress") {
+      const result = stopInData(d, moment);
+      base = result.data;
+      stopped = result.stopped;
+    }
+    const at = moment.toISOString();
+    return { ...base, tasks: base.tasks.map((t) => (t.id === id ? withStatus(t, status, at) : t)) };
+  });
+  return stopped;
 }
 
 export function setTaskWeight(id: string, weight: Weight | null) {
@@ -289,6 +422,231 @@ export function moveTask(id: string, parent: Parent) {
   patchTask(id, (t) => ({ ...t, ...parentFields(parent) }));
 }
 
+// Вместе с задачей удаляются её записи времени и таймер
 export function deleteTask(id: string) {
-  update((d) => ({ ...d, tasks: d.tasks.filter((t) => t.id !== id) }));
+  update((d) => ({
+    ...d,
+    tasks: d.tasks.filter((t) => t.id !== id),
+    timeEntries: d.timeEntries.filter((e) => e.taskId !== id),
+    timer: d.timer?.taskId === id ? null : d.timer,
+  }));
+}
+
+// --- Учёт времени ---
+
+// Записи времени за отрезок [start, end]. Отрезок длиннее суток делится на части
+// по 24 ч (запись не может быть длиннее суток). Время округляется до минут:
+// отрезок короче 30 секунд не записывается.
+function entriesForPeriod(taskId: string, start: Date, end: Date): TimeEntry[] {
+  const total = Math.round((end.getTime() - start.getTime()) / 60000);
+  const entries: TimeEntry[] = [];
+  let offset = 0;
+  while (total - offset >= 1) {
+    const minutes = Math.min(ENTRY_MAX_MINUTES, total - offset);
+    entries.push({
+      id: newId(),
+      taskId,
+      start: new Date(start.getTime() + offset * 60000).toISOString(),
+      minutes,
+      source: "timer",
+    });
+    offset += minutes;
+  }
+  return entries;
+}
+
+// Останавливает таймер и записывает время. Возвращает задачу и записанные минуты.
+function stopInData(d: AppData, end: Date): { data: AppData; stopped: Stopped | null } {
+  if (d.timer === null) return { data: d, stopped: null };
+  const start = new Date(d.timer.startedAt);
+  const safeEnd = end.getTime() < start.getTime() ? start : end;
+  const entries = entriesForPeriod(d.timer.taskId, start, safeEnd);
+  const minutes = entries.reduce((sum, e) => sum + e.minutes, 0);
+  return {
+    data: { ...d, timer: null, timeEntries: [...d.timeEntries, ...entries] },
+    stopped: { taskId: d.timer.taskId, minutes },
+  };
+}
+
+// Запуск таймера. Таймер другой задачи останавливается (одновременно идёт один).
+// Задача из «К выполнению» и «На паузе» переходит в «В работе»; «На проверке» статус не меняет
+// (время проверки тоже учитывается); у выполненной задачи таймер не запускается.
+export function startTimer(taskId: string): "started" | "done" | "missing" {
+  let result: "started" | "done" | "missing" = "started";
+  update((d) => {
+    const task = d.tasks.find((t) => t.id === taskId);
+    // Задачу могли удалить в другой вкладке — тогда ничего не запускаем
+    if (!task) {
+      result = "missing";
+      return d;
+    }
+    if (task.status === "done") {
+      result = "done";
+      return d;
+    }
+    const base = d.timer !== null && d.timer.taskId !== taskId ? stopInData(d, new Date()).data : d;
+    if (base.timer?.taskId === taskId) return base;
+    const startedAt = new Date();
+    const at = startedAt.toISOString();
+    return {
+      ...base,
+      timer: {
+        taskId,
+        startedAt: at,
+        remindAt: new Date(startedAt.getTime() + REMINDER_MS).toISOString(),
+      },
+      tasks: base.tasks.map((t) =>
+        t.id === taskId && (t.status === "todo" || t.status === "paused") ? withStatus(t, "in_progress", at) : t,
+      ),
+    };
+  });
+  return result;
+}
+
+// Остановка таймера в момент end (по умолчанию — сейчас)
+export function stopTimer(end: Date = new Date()): Stopped | null {
+  let stopped: Stopped | null = null;
+  update((d) => {
+    const result = stopInData(d, end);
+    stopped = result.stopped;
+    return result.data;
+  });
+  return stopped;
+}
+
+// «Работа продолжается»: следующее напоминание — через час
+export function snoozeTimer() {
+  update((d) =>
+    d.timer === null
+      ? d
+      : { ...d, timer: { ...d.timer, remindAt: new Date(Date.now() + REMINDER_MS).toISOString() } },
+  );
+}
+
+// Ручной ввод: «потратила столько-то минут» в указанный день
+export function addManualEntry(taskId: string, minutes: number, start: Date) {
+  const clean = Math.round(minutes);
+  if (clean < 1 || clean > ENTRY_MAX_MINUTES) return;
+  const entry: TimeEntry = { id: newId(), taskId, start: start.toISOString(), minutes: clean, source: "manual" };
+  update((d) => ({ ...d, timeEntries: [...d.timeEntries, entry] }));
+}
+
+export function setEntryMinutes(id: string, minutes: number) {
+  const clean = Math.round(minutes);
+  if (clean < 1 || clean > ENTRY_MAX_MINUTES) return;
+  update((d) => ({ ...d, timeEntries: d.timeEntries.map((e) => (e.id === id ? { ...e, minutes: clean } : e)) }));
+}
+
+export function deleteEntry(id: string) {
+  update((d) => ({ ...d, timeEntries: d.timeEntries.filter((e) => e.id !== id) }));
+}
+
+// --- Резервная копия ---
+
+export function currentData(): AppData {
+  return getSnapshot().data;
+}
+
+// Восстановление: заменяет все данные. Текущие данные сначала копируются
+// под отдельный ключ, чтобы ошибочный импорт можно было откатить.
+// Возвращает текст ошибки или null при успехе.
+export function replaceAllData(imported: AppData): string | null {
+  const current = getSnapshot();
+  if (current.locked) {
+    return "Сейчас изменения не сохраняются (см. сообщение выше), поэтому восстановление отключено.";
+  }
+  // Одна копия на ключ: каждое восстановление перезаписывает предыдущую, хранилище не забивается.
+  // Прежнюю копию запоминаем, чтобы вернуть её, если восстановление сорвётся.
+  const previousBackup = importBackupRaw();
+  try {
+    // Копия с датой сохранения — дата видна в «Хранилище копий»
+    localStorage.setItem(IMPORT_BACKUP_KEY, JSON.stringify({ savedAt: now(), data: current.data }));
+  } catch {
+    return "Не удалось сохранить копию текущих данных перед восстановлением: хранилище браузера переполнено. Данные не изменены.";
+  }
+  const data = normalize(imported);
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch {
+    try {
+      if (previousBackup === null) localStorage.removeItem(IMPORT_BACKUP_KEY);
+      else localStorage.setItem(IMPORT_BACKUP_KEY, previousBackup);
+    } catch {
+      // хранилище вернулось к прежнему объёму, место для прежней копии есть; на всякий случай не падаем
+    }
+    snapshot = { ...current, copies: readCopies() };
+    emit();
+    return "Не удалось сохранить данные из файла: хранилище браузера переполнено. Текущие данные не изменены.";
+  }
+  snapshot = { data, notice: IMPORT_NOTICE, locked: false, brokenKey: null, copies: readCopies() };
+  emit();
+  return null;
+}
+
+// Копия данных перед последним восстановлением «как есть» — для скачивания, даже если она не проходит проверку
+export function importBackupRaw(): string | null {
+  try {
+    return localStorage.getItem(IMPORT_BACKUP_KEY);
+  } catch {
+    return null;
+  }
+}
+
+// Копия данных перед последним восстановлением, проверенная схемой (null — копии нет или она испорчена)
+export function importBackupData(): AppData | null {
+  const raw = importBackupRaw();
+  if (raw === null) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    // Новый формат — { savedAt, data }; старый — сами данные без обёртки
+    const payload = parsed && typeof parsed === "object" && "savedAt" in parsed && "data" in parsed ? parsed.data : parsed;
+    const result = appDataSchema.safeParse(payload);
+    return result.success ? normalize(result.data) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Удаление копии до восстановления (например, испорченной — вернуть из неё данные всё равно нельзя)
+export function deleteImportBackup() {
+  try {
+    localStorage.removeItem(IMPORT_BACKUP_KEY);
+  } catch {
+    // хранилище недоступно — удалять нечего
+  }
+  refreshCopies();
+}
+
+// Удаление копии повреждённых данных
+export function deleteBrokenCopy() {
+  try {
+    for (const key of brokenKeys()) localStorage.removeItem(key);
+  } catch {
+    // хранилище недоступно — удалять нечего
+  }
+  // Сообщение о повреждённых данных, указывавшее на эту копию, уберёт refreshCopies
+  refreshCopies();
+}
+
+// Отмена восстановления: возвращает данные, какими они были перед ним, и удаляет копию.
+// Возвращает "broken", если копия испорчена, текст ошибки или null при успехе.
+export function undoImport(): string | "broken" | null {
+  if (getSnapshot().locked) {
+    return "Сейчас изменения не сохраняются (см. сообщение выше), поэтому отмена восстановления отключена.";
+  }
+  const previous = importBackupData();
+  if (previous === null) return importBackupRaw() === null ? "Копия прежних данных не найдена." : "broken";
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(previous));
+  } catch {
+    return "Не удалось вернуть прежние данные: хранилище браузера переполнено.";
+  }
+  try {
+    localStorage.removeItem(IMPORT_BACKUP_KEY);
+  } catch {
+    // данные уже возвращены; копия останется, её можно удалить позже
+  }
+  snapshot = { data: previous, notice: "Прежние данные возвращены.", locked: false, brokenKey: null, copies: readCopies() };
+  emit();
+  return null;
 }

@@ -12,11 +12,17 @@ import {
   renameProject,
   setProjectGoal,
 } from "@/lib/store";
+import { formatMinutes, minutesForTasks } from "@/lib/time";
 import { TaskList } from "./TaskList";
 import { AddInline, EditableTitle, ProgressBar, TextInput } from "./ui";
 import type { Selection } from "./AppShell";
 
-// Три экрана основной области: «Входящие», цель, проект
+// Экраны основной области: «Неразобранные», «Все», цель, проект
+
+// Потраченное время по набору задач
+function spentText(data: AppData, tasks: { id: string }[]) {
+  return formatMinutes(minutesForTasks(data, new Set(tasks.map((t) => t.id))));
+}
 
 function DeleteButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
@@ -36,11 +42,25 @@ export function InboxView({ data }: { data: AppData }) {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Входящие</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Неразобранные</h1>
         <p className="text-sm text-zinc-500">Задачи без цели и проекта. Разложить их можно в карточке задачи.</p>
       </div>
       <TextInput placeholder="Новая задача — Enter, чтобы добавить" ariaLabel="Новая задача" onSubmit={(t) => addTask(t, { kind: "inbox" })} />
-      <TaskList tasks={inboxTasks(data)} data={data} emptyText="Входящие пусты." />
+      <TaskList tasks={inboxTasks(data)} data={data} emptyText="Неразобранных задач нет." />
+    </div>
+  );
+}
+
+// Все задачи одним списком; у каждой видно, где она лежит
+export function AllTasksView({ data }: { data: AppData }) {
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Все задачи</h1>
+        <p className="text-sm text-zinc-500">Задачи из всех целей и проектов. Новая задача отсюда попадает в «Неразобранные».</p>
+      </div>
+      <TextInput placeholder="Новая задача — Enter, чтобы добавить" ariaLabel="Новая задача" onSubmit={(t) => addTask(t, { kind: "inbox" })} />
+      <TaskList tasks={data.tasks} data={data} emptyText="Задач пока нет." showPath />
     </div>
   );
 }
@@ -65,6 +85,7 @@ export function GoalView({ data, goal, onSelect }: { data: AppData; goal: Goal; 
           />
         </div>
         <ProgressBar progress={progressOf(goalTasks(data, goal.id))} label={`Прогресс цели «${goal.title}»`} />
+        <p className="text-sm text-zinc-500">Потрачено: {spentText(data, goalTasks(data, goal.id))}</p>
       </div>
 
       <section className="space-y-2">
@@ -89,7 +110,9 @@ export function GoalView({ data, goal, onSelect }: { data: AppData; goal: Goal; 
                 Проект: {project.title}
               </button>
             </h2>
-            <span className="text-xs text-zinc-500">{progressOf(projectTasks(data, project.id)).percent}%</span>
+            <span className="text-xs text-zinc-500">
+              {progressOf(projectTasks(data, project.id)).percent}% · {spentText(data, projectTasks(data, project.id))}
+            </span>
           </div>
           <TaskList tasks={projectTasks(data, project.id)} data={data} emptyText="В проекте пока нет задач." />
         </section>
@@ -130,7 +153,7 @@ export function ProjectView({ data, project, onSelect }: { data: AppData; projec
           <DeleteButton
             label="Удалить проект"
             onClick={() => {
-              const where = project.goalId ? "перейдут к цели проекта" : "перейдут во «Входящие»";
+              const where = project.goalId ? "перейдут к цели проекта" : "перейдут в «Неразобранные»";
               if (window.confirm(`Удалить проект «${project.title}»? Его задачи ${where}.`)) {
                 deleteProject(project.id);
                 onSelect(project.goalId ? { kind: "goal", id: project.goalId } : { kind: "inbox" });
@@ -139,6 +162,7 @@ export function ProjectView({ data, project, onSelect }: { data: AppData; projec
           />
         </div>
         <ProgressBar progress={progressOf(projectTasks(data, project.id))} label={`Прогресс проекта «${project.title}»`} />
+        <p className="text-sm text-zinc-500">Потрачено: {spentText(data, projectTasks(data, project.id))}</p>
       </div>
       <TextInput
         placeholder="Новая задача проекта — Enter, чтобы добавить"
