@@ -23,7 +23,7 @@ export function progressOf(tasks: Task[]): Progress {
 }
 
 // Задачи цели: привязанные к ней напрямую и задачи её проектов.
-// Связанные задачи (relatedGoalIds) сюда не входят — они не влияют на цифры цели.
+// Связанные задачи (relatedTaskIds) на цифры цели не влияют.
 export function goalTasks(data: AppData, goalId: string): Task[] {
   const projectIds = new Set(data.projects.filter((p) => p.goalId === goalId).map((p) => p.id));
   return data.tasks.filter(

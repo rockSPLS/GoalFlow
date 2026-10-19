@@ -75,7 +75,7 @@ export function RunningTime({ startedAt, className }: { startedAt: string; class
 const fieldClass =
   "rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900";
 
-// Блок «Время» в карточке задачи: итог, записи, ручное добавление
+// Блок «Затраты времени» в карточке задачи: итог, записи, ручное добавление
 export function TaskTimeSection({ task, data }: { task: Task; data: AppData }) {
   const entries = data.timeEntries.filter((e) => e.taskId === task.id).sort((a, b) => b.start.localeCompare(a.start));
   const [hours, setHours] = useState("");
@@ -118,7 +118,7 @@ export function TaskTimeSection({ task, data }: { task: Task; data: AppData }) {
   return (
     <section className="space-y-2">
       <h3 className="text-xs text-zinc-500">
-        Время: <span className="font-medium text-zinc-900 dark:text-zinc-100">{formatMinutes(sumMinutes(entries))}</span>
+        Затраты времени: <span className="font-medium text-zinc-900 dark:text-zinc-100">{formatMinutes(sumMinutes(entries))}</span>
       </h3>
 
       <div className="flex flex-wrap items-end gap-2">
@@ -131,7 +131,7 @@ export function TaskTimeSection({ task, data }: { task: Task; data: AppData }) {
           <input type="number" min={0} max={59} inputMode="numeric" value={minutes} onChange={(e) => { setMinutes(e.target.value); setError(null); }} className={`${fieldClass} w-20`} />
         </label>
         <label className="flex flex-col gap-1 text-xs text-zinc-500">
-          День
+          Дата
           <input type="date" value={date} max={toDateInputValue(new Date())} onChange={(e) => setDate(e.target.value)} className={fieldClass} />
         </label>
         <button type="button" onClick={add} className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800">

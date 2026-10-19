@@ -1,18 +1,23 @@
 "use client";
 
+import { useState } from "react";
 import { Trash } from "lucide-react";
-import type { AppData, Goal, Project } from "@/lib/model";
+import type { AppData, Goal, Project, TaskFilter } from "@/lib/model";
+import { filterTasks, isEmptyFilter, READY_VIEWS, sameFilter, todayKey } from "@/lib/filters";
 import { goalTasks, inboxTasks, progressOf, projectTasks } from "@/lib/progress";
 import {
   addProject,
   addTask,
   deleteGoal,
   deleteProject,
+  deleteView,
   renameGoal,
   renameProject,
   setProjectGoal,
 } from "@/lib/store";
 import { formatMinutes, minutesForTasks } from "@/lib/time";
+import { CalendarView } from "./CalendarView";
+import { FilterPanel } from "./FilterPanel";
 import { TaskList } from "./TaskList";
 import { AddInline, EditableTitle, ProgressBar, TextInput } from "./ui";
 import type { Selection } from "./AppShell";
@@ -51,16 +56,62 @@ export function InboxView({ data }: { data: AppData }) {
   );
 }
 
-// Все задачи одним списком; у каждой видно, где она лежит
-export function AllTasksView({ data }: { data: AppData }) {
+function modeClass(active: boolean) {
+  return `px-3 py-1.5 text-sm ${
+    active ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-200" : "hover:bg-zinc-100 dark:hover:bg-zinc-800"
+  }`;
+}
+
+// Все задачи одним списком или календарём; у каждой видно, где она лежит.
+// Условия фильтра действуют и на список, и на календарь; готовый или сохранённый вид — те же условия под именем.
+export function AllTasksView({ data, filter, onFilter }: { data: AppData; filter: TaskFilter; onFilter: (f: TaskFilter) => void }) {
+  const [mode, setMode] = useState<"list" | "calendar">("list");
+  const tasks = filterTasks(data, data.tasks, filter, todayKey());
+  const ready = READY_VIEWS.find((v) => sameFilter(v.filter, filter));
+  // Сохранённый вид можно удалить, даже если его условия совпали с готовым (например, после восстановления из файла)
+  const saved = data.views.find((v) => sameFilter(v.filter, filter));
+  const viewName = ready?.name ?? saved?.name;
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Все задачи</h1>
-        <p className="text-sm text-zinc-500">Задачи из всех целей и проектов. Новая задача отсюда попадает в «Неразобранные».</p>
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">{viewName ?? "Все задачи"}</h1>
+            {saved && (
+              <DeleteButton
+                label="Удалить вид"
+                onClick={() => {
+                  if (window.confirm(`Удалить вид «${saved.name}»? Задачи останутся.`)) deleteView(saved.id);
+                }}
+              />
+            )}
+          </div>
+          <p className="text-sm text-zinc-500">
+            {viewName ? "Задачи по условиям вида." : "Задачи из всех целей и проектов."} Новая задача отсюда попадает в «Неразобранные».
+          </p>
+        </div>
+        <div role="group" aria-label="Вид списка" className="flex overflow-hidden rounded-md border border-zinc-300 dark:border-zinc-700">
+          <button type="button" aria-pressed={mode === "list"} onClick={() => setMode("list")} className={modeClass(mode === "list")}>
+            Список
+          </button>
+          <button type="button" aria-pressed={mode === "calendar"} onClick={() => setMode("calendar")} className={modeClass(mode === "calendar")}>
+            Календарь
+          </button>
+        </div>
       </div>
+      <FilterPanel data={data} filter={filter} onFilter={onFilter} />
       <TextInput placeholder="Новая задача — Enter, чтобы добавить" ariaLabel="Новая задача" onSubmit={(t) => addTask(t, { kind: "inbox" })} />
-      <TaskList tasks={data.tasks} data={data} emptyText="Задач пока нет." showPath />
+      {mode === "list" ? (
+        <TaskList
+          tasks={tasks}
+          data={data}
+          emptyText={isEmptyFilter(filter) ? "Задач пока нет." : "Нет задач по этим условиям."}
+          showPath
+          doneOpen={filter.status === "done"}
+        />
+      ) : (
+        <CalendarView tasks={tasks} data={data} />
+      )}
     </div>
   );
 }

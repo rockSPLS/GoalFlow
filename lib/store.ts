@@ -3,16 +3,27 @@
 import { useSyncExternalStore } from "react";
 import {
   appDataSchema,
+  dayDate,
+  DESCRIPTION_MAX,
   emptyData,
   ENTRY_MAX_MINUTES,
+  RELATED_MAX,
   REMINDER_MS,
+  TAG_LIBRARY_MAX,
+  TAG_MAX,
+  TAGS_PER_TASK,
   TITLE_MAX,
+  VIEW_NAME_MAX,
+  VIEWS_MAX,
   type AppData,
   type Goal,
   type Parent,
+  type Priority,
   type Project,
+  type SavedView,
   type Status,
   type Task,
+  type TaskFilter,
   type TimeEntry,
   type Weight,
 } from "./model";
@@ -188,16 +199,55 @@ function normalize(data: AppData): AppData {
     p.goalId !== null && !goalIds.has(p.goalId) ? { ...p, goalId: null } : p,
   );
   const projectIds = new Set(projects.map((p) => p.id));
+  const taskIds = new Set(data.tasks.map((t) => t.id));
+  const related = symmetricLinks(data.tasks, taskIds);
   const tasks = data.tasks.map((t) => {
     const projectId = t.projectId !== null && projectIds.has(t.projectId) ? t.projectId : null;
     const goalId = projectId === null && t.goalId !== null && goalIds.has(t.goalId) ? t.goalId : null;
-    return { ...t, projectId, goalId, relatedGoalIds: t.relatedGoalIds.filter((g) => goalIds.has(g)) };
+    // Повторы тегов (например, из поправленного вручную файла) убираются без учёта регистра
+    const tags = t.tags.filter(
+      (tg, i) => t.tags.findIndex((other) => other.toLocaleLowerCase("ru") === tg.toLocaleLowerCase("ru")) === i,
+    );
+    return { ...t, projectId, goalId, tags, relatedTaskIds: related.get(t.id) ?? [] };
   });
   // Записи времени и таймер удалённой задачи не нужны
-  const taskIds = new Set(tasks.map((t) => t.id));
   const timeEntries = data.timeEntries.filter((e) => taskIds.has(e.taskId));
   const timer = data.timer !== null && taskIds.has(data.timer.taskId) ? data.timer : null;
-  return { ...data, projects, tasks, timeEntries, timer };
+  return { ...data, projects, tasks, timeEntries, timer, tags: tagLibrary(data.tags, tasks) };
+}
+
+const tagKey = (tag: string) => tag.toLocaleLowerCase("ru");
+
+// Справочник тегов: прежний список плюс теги задач (у старых данных справочника нет — он собирается из задач).
+// Повторы без учёта регистра убираются, первым остаётся уже записанное написание.
+function tagLibrary(library: string[], tasks: Task[]): string[] {
+  const seen = new Map<string, string>();
+  for (const tg of [...library, ...tasks.flatMap((t) => t.tags)]) if (!seen.has(tagKey(tg))) seen.set(tagKey(tg), tg);
+  return [...seen.values()].slice(0, TAG_LIBRARY_MAX);
+}
+
+// Связи задач делаются двусторонними: связь, записанная только у одной задачи, дописывается второй;
+// ссылки на удалённые задачи и на саму себя отбрасываются. Если у задачи связей больше предела,
+// лишние убираются с обеих сторон — иначе следующая загрузка не прошла бы проверку схемой.
+function symmetricLinks(tasks: Task[], taskIds: Set<string>): Map<string, string[]> {
+  const union = new Map<string, Set<string>>();
+  const link = (a: string, b: string) => {
+    if (!union.has(a)) union.set(a, new Set());
+    union.get(a)?.add(b);
+  };
+  for (const t of tasks) {
+    for (const other of t.relatedTaskIds) {
+      if (other === t.id || !taskIds.has(other)) continue;
+      link(t.id, other);
+      link(other, t.id);
+    }
+  }
+  const trimmed = new Map([...union].map(([id, set]) => [id, [...set].slice(0, RELATED_MAX)]));
+  const result = new Map<string, string[]>();
+  for (const [id, list] of trimmed) {
+    result.set(id, list.filter((other) => trimmed.get(other)?.includes(id)));
+  }
+  return result;
 }
 
 function getSnapshot(): Snapshot {
@@ -304,11 +354,7 @@ export function deleteGoal(id: string) {
     ...d,
     goals: d.goals.filter((g) => g.id !== id),
     projects: d.projects.map((p) => (p.goalId === id ? { ...p, goalId: null } : p)),
-    tasks: d.tasks.map((t) => ({
-      ...t,
-      goalId: t.goalId === id ? null : t.goalId,
-      relatedGoalIds: t.relatedGoalIds.filter((g) => g !== id),
-    })),
+    tasks: d.tasks.map((t) => (t.goalId === id ? { ...t, goalId: null } : t)),
   }));
 }
 
@@ -357,7 +403,11 @@ export function addTask(title: string, parent: Parent): string | null {
     status: "todo",
     weight: null,
     ...parentFields(parent),
-    relatedGoalIds: [],
+    description: "",
+    deadline: null,
+    priority: null,
+    tags: [],
+    relatedTaskIds: [],
     createdAt,
     doneAt: null,
     statusHistory: [{ status: "todo", at: createdAt }],
@@ -381,8 +431,18 @@ function withStatus(t: Task, status: Status, at: string): Task {
   };
 }
 
+// Изменение одной задачи. Если patch вернул ту же задачу, данные не меняются — сохранять нечего.
 function patchTask(id: string, patch: (t: Task) => Task) {
-  update((d) => ({ ...d, tasks: d.tasks.map((t) => (t.id === id ? patch(t) : t)) }));
+  update((d) => {
+    let changed = false;
+    const tasks = d.tasks.map((t) => {
+      if (t.id !== id) return t;
+      const next = patch(t);
+      if (next !== t) changed = true;
+      return next;
+    });
+    return changed ? { ...d, tasks } : d;
+  });
 }
 
 export function renameTask(id: string, title: string) {
@@ -422,14 +482,122 @@ export function moveTask(id: string, parent: Parent) {
   patchTask(id, (t) => ({ ...t, ...parentFields(parent) }));
 }
 
-// Вместе с задачей удаляются её записи времени и таймер
+export function setTaskDescription(id: string, description: string) {
+  const clean = description.slice(0, DESCRIPTION_MAX);
+  patchTask(id, (t) => (t.description === clean ? t : { ...t, description: clean }));
+}
+
+// Дедлайн — дата «ГГГГ-ММ-ДД» или null. Проверка той же схемой, что при загрузке:
+// несуществующая дата иначе сохранилась бы, и при следующем открытии данные сочлись бы повреждёнными.
+export function setTaskDeadline(id: string, deadline: string | null) {
+  if (deadline !== null && !dayDate.safeParse(deadline).success) return;
+  patchTask(id, (t) => (t.deadline === deadline ? t : { ...t, deadline }));
+}
+
+export function setTaskPriority(id: string, priority: Priority | null) {
+  patchTask(id, (t) => (t.priority === priority ? t : { ...t, priority }));
+}
+
+// Тег: лишние пробелы убираются; если такой тег уже есть (без учёта регистра) — берётся его написание,
+// чтобы не появлялись «работа» и «Работа». Возвращает текст ошибки или null.
+export function addTaskTag(id: string, raw: string): string | null {
+  const clean = raw.trim().replace(/\s+/g, " ");
+  if (!clean) return null;
+  if (clean.length > TAG_MAX) return `Тег — не длиннее ${TAG_MAX} символов.`;
+  const data = getSnapshot().data;
+  const task = data.tasks.find((t) => t.id === id);
+  if (!task) return null;
+  const key = tagKey(clean);
+  if (task.tags.some((tg) => tagKey(tg) === key)) return null;
+  if (task.tags.length >= TAGS_PER_TASK) return `У задачи может быть не больше ${TAGS_PER_TASK} тегов — снимите один, чтобы добавить новый.`;
+  // Уже известный тег берётся в записанном написании; новый — запоминается в справочнике
+  const known = [...data.tags, ...data.tasks.flatMap((t) => t.tags)].find((tg) => tagKey(tg) === key);
+  if (!known && data.tags.length >= TAG_LIBRARY_MAX) return `В справочнике может быть не больше ${TAG_LIBRARY_MAX} тегов.`;
+  const tag = known ?? clean;
+  update((d) => ({
+    ...d,
+    // Справочник полон (бывает только при очень старых или поправленных вручную данных) — тег ставится задаче,
+    // но в справочник не дописывается: иначе следующая загрузка не прошла бы проверку схемой
+    tags: d.tags.some((tg) => tagKey(tg) === key) || d.tags.length >= TAG_LIBRARY_MAX ? d.tags : [...d.tags, tag],
+    tasks: d.tasks.map((t) => (t.id === id ? { ...t, tags: [...t.tags, tag] } : t)),
+  }));
+  return null;
+}
+
+// Снять тег с задачи; в справочнике он остаётся
+export function removeTaskTag(id: string, tag: string) {
+  patchTask(id, (t) => ({ ...t, tags: t.tags.filter((tg) => tg !== tag) }));
+}
+
+// Сколько задач с этим тегом (без учёта регистра) — для подтверждения удаления
+export function tagUsage(tag: string): number {
+  return getSnapshot().data.tasks.filter((t) => t.tags.some((tg) => tagKey(tg) === tagKey(tag))).length;
+}
+
+// Удалить тег из справочника и со всех задач
+export function deleteTag(tag: string) {
+  const key = tagKey(tag);
+  update((d) => ({
+    ...d,
+    tags: d.tags.filter((tg) => tagKey(tg) !== key),
+    tasks: d.tasks.map((t) => (t.tags.some((tg) => tagKey(tg) === key) ? { ...t, tags: t.tags.filter((tg) => tagKey(tg) !== key) } : t)),
+  }));
+}
+
+// Связь задач — у обеих сразу. Возвращает текст ошибки или null.
+export function linkTasks(a: string, b: string): string | null {
+  if (a === b) return null;
+  const tasks = getSnapshot().data.tasks;
+  const first = tasks.find((t) => t.id === a);
+  const second = tasks.find((t) => t.id === b);
+  if (!first || !second || first.relatedTaskIds.includes(b)) return null;
+  if (first.relatedTaskIds.length >= RELATED_MAX || second.relatedTaskIds.length >= RELATED_MAX) {
+    return `У задачи может быть не больше ${RELATED_MAX} связанных задач.`;
+  }
+  update((d) => ({
+    ...d,
+    tasks: d.tasks.map((t) =>
+      t.id === a ? { ...t, relatedTaskIds: [...t.relatedTaskIds, b] } : t.id === b ? { ...t, relatedTaskIds: [...t.relatedTaskIds, a] } : t,
+    ),
+  }));
+  return null;
+}
+
+export function unlinkTasks(a: string, b: string) {
+  update((d) => ({
+    ...d,
+    tasks: d.tasks.map((t) =>
+      t.id === a || t.id === b ? { ...t, relatedTaskIds: t.relatedTaskIds.filter((r) => r !== a && r !== b) } : t,
+    ),
+  }));
+}
+
+// Вместе с задачей удаляются её записи времени, таймер и связи с ней
 export function deleteTask(id: string) {
   update((d) => ({
     ...d,
-    tasks: d.tasks.filter((t) => t.id !== id),
+    tasks: d.tasks
+      .filter((t) => t.id !== id)
+      .map((t) => (t.relatedTaskIds.includes(id) ? { ...t, relatedTaskIds: t.relatedTaskIds.filter((r) => r !== id) } : t)),
     timeEntries: d.timeEntries.filter((e) => e.taskId !== id),
     timer: d.timer?.taskId === id ? null : d.timer,
   }));
+}
+
+// --- Сохранённые виды ---
+
+// Возвращает id нового вида или текст ошибки
+export function addView(name: string, filter: TaskFilter): { id: string } | { error: string } {
+  const clean = name.trim().slice(0, VIEW_NAME_MAX);
+  if (!clean) return { error: "Введите название вида." };
+  if (getSnapshot().data.views.length >= VIEWS_MAX) return { error: `Видов может быть не больше ${VIEWS_MAX}.` };
+  const view: SavedView = { id: newId(), name: clean, filter };
+  update((d) => ({ ...d, views: [...d.views, view] }));
+  return { id: view.id };
+}
+
+export function deleteView(id: string) {
+  update((d) => ({ ...d, views: d.views.filter((v) => v.id !== id) }));
 }
 
 // --- Учёт времени ---

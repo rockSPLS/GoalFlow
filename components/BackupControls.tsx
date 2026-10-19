@@ -2,10 +2,11 @@
 
 import { useRef, useState } from "react";
 import { Archive, Download, Upload } from "lucide-react";
-import { exportJson, exportTimeCsv, readBackupFile } from "@/lib/backup";
+import { exportJson, readBackupFile } from "@/lib/backup";
 import { currentData, replaceAllData, type Copies } from "@/lib/store";
 
-// Резервная копия: экспорт JSON и CSV, восстановление из JSON, переход в «Хранилище копий»
+// Резервная копия: экспорт JSON, восстановление из JSON, переход в «Хранилище копий».
+// Таблица затрат времени (CSV) выгружается на экране «Затраты времени».
 
 const buttonClass =
   "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800/60";
@@ -47,10 +48,6 @@ export function BackupControls({ copies, copiesOpen, onOpenCopies }: Props) {
       <button type="button" onClick={() => exportJson(currentData())} className={buttonClass}>
         <Download size={16} className="shrink-0" aria-hidden="true" />
         Скачать копию (JSON)
-      </button>
-      <button type="button" onClick={() => exportTimeCsv(currentData())} className={buttonClass}>
-        <Download size={16} className="shrink-0" aria-hidden="true" />
-        Время для Excel (CSV)
       </button>
       <button type="button" onClick={() => fileInput.current?.click()} className={buttonClass}>
         <Upload size={16} className="shrink-0" aria-hidden="true" />

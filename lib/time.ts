@@ -55,7 +55,7 @@ export function entriesBetween(entries: TimeEntry[], from: Date, to: Date): Time
   });
 }
 
-// Цель, к которой относится задача (через проект или напрямую); связанные цели не учитываются
+// Цель, к которой относится задача (через проект или напрямую)
 export function goalIdOfTask(data: AppData, taskId: string): string | null {
   const task = data.tasks.find((t) => t.id === taskId);
   if (!task) return null;

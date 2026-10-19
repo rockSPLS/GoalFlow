@@ -1,7 +1,7 @@
 "use client";
 
 import { backupSchema, type AppData } from "./model";
-import { goalIdOfTask, toDateInputValue, formatTime } from "./time";
+import { addDays, entriesBetween, goalIdOfTask, toDateInputValue, formatTime } from "./time";
 
 // Экспорт (JSON — полная копия, CSV — записи времени для Excel) и разбор файла для восстановления
 
@@ -41,9 +41,11 @@ function csvCell(value: string | number): string {
   return /[";\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-export function exportTimeCsv(data: AppData) {
+// Записи времени в CSV: за промежуток [from, to) или за всё время (range не задан)
+export function exportTimeCsv(data: AppData, range?: { from: Date; to: Date }) {
   const header = ["Дата", "Начало", "Минуты", "Часы", "Цель", "Проект", "Задача", "Способ"];
-  const rows = [...data.timeEntries]
+  const entries = range ? entriesBetween(data.timeEntries, range.from, range.to) : data.timeEntries;
+  const rows = [...entries]
     .sort((a, b) => a.start.localeCompare(b.start))
     .map((e) => {
       const start = new Date(e.start);
@@ -66,7 +68,11 @@ export function exportTimeCsv(data: AppData) {
     });
   // BOM в начале и «;» как разделитель — чтобы русский Excel открыл файл без настройки
   const csv = "\uFEFF" + [header, ...rows].map((row) => row.map(csvCell).join(";")).join("\r\n");
-  download(`goalflow-time-${toDateInputValue(new Date())}.csv`, csv, "text/csv;charset=utf-8");
+  // В имени файла — период: «goalflow-time-2026-10-12_2026-10-18.csv» или «goalflow-time-all-2026-10-18.csv»
+  const name = range
+    ? `${toDateInputValue(range.from)}_${toDateInputValue(addDays(range.to, -1))}`
+    : `all-${toDateInputValue(new Date())}`;
+  download(`goalflow-time-${name}.csv`, csv, "text/csv;charset=utf-8");
 }
 
 // Читает файл резервной копии и проверяет его схемой. Ошибка — понятный текст для пользователя.

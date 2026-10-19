@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Menu, X } from "lucide-react";
 import { unlockAudio } from "@/lib/sound";
 import { downloadText } from "@/lib/backup";
+import type { Task, TaskFilter } from "@/lib/model";
 import { brokenDataRaw, dismissNotice, IMPORT_NOTICE, useStore } from "@/lib/store";
 import { toDateInputValue } from "@/lib/time";
 import { BackupControls } from "./BackupControls";
@@ -13,6 +14,7 @@ import { ThemeToggle } from "./ThemeToggle";
 import { StopPromptBanner, TimerEffects } from "./TimerBanners";
 import { TimeView } from "./TimeView";
 import { AllTasksView, GoalView, InboxView, ProjectView } from "./Views";
+import { isTaskOpen, TaskUiContext, type OpenTask, type TaskNav } from "./task-ui";
 
 const noticeButtonClass =
   "rounded-md border border-amber-400 px-3 py-1 hover:bg-amber-100 dark:border-amber-700 dark:hover:bg-amber-900";
@@ -26,7 +28,8 @@ function downloadBroken(key: string) {
 // Что открыто в основной области
 export type Selection =
   | { kind: "inbox" }
-  | { kind: "all" }
+  // «Все» с условиями фильтра (пустой фильтр — все задачи; готовые и сохранённые виды — свои условия)
+  | { kind: "all"; filter: TaskFilter }
   | { kind: "copies" }
   | { kind: "time" }
   | { kind: "goal"; id: string }
@@ -36,6 +39,8 @@ export function AppShell() {
   const snapshot = useStore();
   const [selection, setSelection] = useState<Selection>({ kind: "inbox" });
   const [menuOpen, setMenuOpen] = useState(false);
+  const [openTask, setOpenTask] = useState<OpenTask>(null);
+  const [nav, setNav] = useState<TaskNav>(null);
 
   // На сервере и до чтения localStorage данных ещё нет
   if (snapshot === null) {
@@ -51,10 +56,36 @@ export function AppShell() {
   const select = (next: Selection) => {
     setSelection(next);
     setMenuOpen(false);
+    setOpenTask(null);
+    setNav(null);
+  };
+
+  const taskUi = {
+    openTask,
+    nav,
+    // Сверяем и признак «выполнена»: после смены статуса карточка уже скрыта, и клик должен её открыть
+    toggleTask: (task: Task) =>
+      setOpenTask(isTaskOpen(openTask, task) ? null : { id: task.id, done: task.status === "done" }),
+    // Переход к задаче: экран её проекта, цели или «Неразобранные», карточка открыта
+    goToTask: (taskId: string) => {
+      const task = data.tasks.find((t) => t.id === taskId);
+      if (!task) return;
+      setSelection(
+        task.projectId !== null
+          ? { kind: "project", id: task.projectId }
+          : task.goalId !== null
+            ? { kind: "goal", id: task.goalId }
+            : { kind: "inbox" },
+      );
+      setMenuOpen(false);
+      setOpenTask({ id: task.id, done: task.status === "done" });
+      setNav({ id: task.id, seq: (nav?.seq ?? 0) + 1 });
+    },
   };
 
   return (
     // Любой клик или клавиша — действие пользователя: после него браузер разрешит звук напоминания
+    <TaskUiContext value={taskUi}>
     <div className="flex min-h-full flex-1 flex-col md:flex-row" onPointerDownCapture={unlockAudio} onKeyDownCapture={unlockAudio}>
       <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3 md:hidden dark:border-zinc-800">
         <span className="font-semibold">GoalFlow</span>
@@ -119,7 +150,7 @@ export function AppShell() {
           ) : current.kind === "time" ? (
             <TimeView data={data} />
           ) : current.kind === "all" ? (
-            <AllTasksView data={data} />
+            <AllTasksView data={data} filter={current.filter} onFilter={(filter) => setSelection({ kind: "all", filter })} />
           ) : current.kind === "copies" ? (
             // key: когда копии меняются, экран начинается заново — старое сообщение об ошибке не остаётся
             <CopiesView key={`${copies.beforeImport}|${copies.broken?.at}`} copies={copies} />
@@ -129,5 +160,6 @@ export function AppShell() {
         </div>
       </main>
     </div>
+    </TaskUiContext>
   );
 }

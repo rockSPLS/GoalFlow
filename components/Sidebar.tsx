@@ -1,7 +1,8 @@
 "use client";
 
-import { Clock, Folder, Inbox, List, Target } from "lucide-react";
-import type { AppData } from "@/lib/model";
+import { Clock, Folder, Inbox, List, ListFilter, Target } from "lucide-react";
+import { EMPTY_FILTER, filterTasks, READY_VIEWS, sameFilter, todayKey } from "@/lib/filters";
+import type { AppData, TaskFilter } from "@/lib/model";
 import { goalTasks, inboxTasks, progressOf } from "@/lib/progress";
 import { addGoal, addProject } from "@/lib/store";
 import { AddInline } from "./ui";
@@ -28,6 +29,13 @@ export function Sidebar({ data, selection, onSelect }: Props) {
   const orphanProjects = data.projects.filter((p) => p.goalId === null);
   const isSelected = (kind: Selection["kind"], id?: string) =>
     selection.kind === kind && ("id" in selection ? selection.id === id : true);
+  // Готовые и сохранённые виды открывают «Все» со своими условиями; выделен вид, чьи условия сейчас стоят
+  const views = [...READY_VIEWS, ...data.views];
+  const activeView =
+    selection.kind === "all" ? views.find((v) => sameFilter(v.filter, selection.filter)) : undefined;
+  const today = todayKey();
+  const openCount = (filter: TaskFilter) =>
+    filterTasks(data, data.tasks, filter, today).filter((t) => t.status !== "done").length;
 
   return (
     <nav aria-label="Навигация" className="space-y-5">
@@ -46,15 +54,39 @@ export function Sidebar({ data, selection, onSelect }: Props) {
           </button>
           <button
             type="button"
-            onClick={() => onSelect({ kind: "all" })}
-            aria-current={isSelected("all") ? "page" : undefined}
-            className={itemClass(isSelected("all"))}
+            onClick={() => onSelect({ kind: "all", filter: EMPTY_FILTER })}
+            aria-current={isSelected("all") && !activeView ? "page" : undefined}
+            className={itemClass(isSelected("all") && !activeView)}
           >
             <List size={16} className="shrink-0" aria-hidden="true" />
             <span className="flex-1 truncate">Все</span>
             {openAll > 0 && <span className="text-xs text-zinc-500">{openAll}</span>}
           </button>
         </div>
+      </section>
+
+      <section>
+        <h2 className="mb-1 px-2 text-xs font-medium uppercase tracking-wide text-zinc-500">Виды</h2>
+        <ul className="space-y-0.5">
+          {views.map((view) => {
+            const active = activeView?.id === view.id;
+            const count = openCount(view.filter);
+            return (
+              <li key={view.id}>
+                <button
+                  type="button"
+                  onClick={() => onSelect({ kind: "all", filter: view.filter })}
+                  aria-current={active ? "page" : undefined}
+                  className={itemClass(active)}
+                >
+                  <ListFilter size={16} className="shrink-0 text-zinc-400" aria-hidden="true" />
+                  <span className="flex-1 truncate">{view.name}</span>
+                  {count > 0 && <span className="text-xs text-zinc-500">{count}</span>}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
       </section>
 
       <section>
@@ -134,7 +166,7 @@ export function Sidebar({ data, selection, onSelect }: Props) {
         className={itemClass(isSelected("time"))}
       >
         <Clock size={16} className="shrink-0" aria-hidden="true" />
-        <span className="flex-1 truncate">Время</span>
+        <span className="flex-1 truncate">Затраты времени</span>
       </button>
     </nav>
   );

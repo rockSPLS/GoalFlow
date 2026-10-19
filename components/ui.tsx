@@ -13,13 +13,15 @@ const inputClass =
 type TextInputProps = {
   placeholder: string;
   ariaLabel: string;
-  onSubmit: (value: string) => void;
+  // false — ввод не принят (например, ошибка): текст остаётся в поле
+  onSubmit: (value: string) => unknown;
   onCancel?: () => void;
   autoFocus?: boolean;
+  maxLength?: number;
 };
 
 // Поле ввода: Enter — добавить, Esc — отменить
-export function TextInput({ placeholder, ariaLabel, onSubmit, onCancel, autoFocus }: TextInputProps) {
+export function TextInput({ placeholder, ariaLabel, onSubmit, onCancel, autoFocus, maxLength = TITLE_MAX }: TextInputProps) {
   const [value, setValue] = useState("");
   return (
     <input
@@ -28,16 +30,13 @@ export function TextInput({ placeholder, ariaLabel, onSubmit, onCancel, autoFocu
       placeholder={placeholder}
       aria-label={ariaLabel}
       autoFocus={autoFocus}
-      maxLength={TITLE_MAX}
+      maxLength={maxLength}
       className={inputClass}
       onKeyDown={(e) => {
         if (e.nativeEvent.isComposing) return;
         if (e.key === "Enter") {
           const clean = value.trim();
-          if (clean) {
-            onSubmit(clean);
-            setValue("");
-          }
+          if (clean && onSubmit(clean) !== false) setValue("");
         } else if (e.key === "Escape") {
           setValue("");
           onCancel?.();
