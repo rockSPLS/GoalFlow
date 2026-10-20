@@ -17,6 +17,8 @@ export type TaskUi = {
   openTask: OpenTask;
   toggleTask: (task: Task) => void;
   goToTask: (taskId: string) => void;
+  // Статус поменяли не из карточки — карточка этой задачи (если открыта) остаётся открытой
+  syncOpen: (taskId: string, done: boolean) => void;
   nav: TaskNav;
 };
 
@@ -24,6 +26,7 @@ export const TaskUiContext = createContext<TaskUi>({
   openTask: null,
   toggleTask: () => {},
   goToTask: () => {},
+  syncOpen: () => {},
   nav: null,
 });
 

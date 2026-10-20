@@ -1,19 +1,27 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Menu, X } from "lucide-react";
 import { unlockAudio } from "@/lib/sound";
+import { showStopPrompt } from "@/lib/stop-prompt";
 import { downloadText } from "@/lib/backup";
 import type { Task, TaskFilter } from "@/lib/model";
-import { brokenDataRaw, dismissNotice, IMPORT_NOTICE, useStore } from "@/lib/store";
+import { brokenDataRaw, dismissNotice, IMPORT_NOTICE, startTimer, useStore } from "@/lib/store";
 import { toDateInputValue } from "@/lib/time";
 import { BackupControls } from "./BackupControls";
+import { Dialog } from "./Dialog";
 import { CopiesView, ImportUndoButtons } from "./ImportUndo";
+import { KeyboardHelp, KeyboardHelpButton } from "./KeyboardHelp";
+import { Palette } from "./Palette";
+import { QuickAdd } from "./QuickAdd";
 import { Sidebar } from "./Sidebar";
 import { ThemeToggle } from "./ThemeToggle";
+import { changeStatus, stopAndAsk } from "./TimeParts";
 import { StopPromptBanner, TimerEffects } from "./TimerBanners";
 import { TimeView } from "./TimeView";
+import { ToastBar } from "./ToastBar";
 import { AllTasksView, GoalView, InboxView, ProjectView } from "./Views";
+import { AppUiContext, defaultParentOf, type Toast } from "./app-ui";
 import { isTaskOpen, TaskUiContext, type OpenTask, type TaskNav } from "./task-ui";
 
 const noticeButtonClass =
@@ -28,7 +36,7 @@ function downloadBroken(key: string) {
 // Что открыто в основной области
 export type Selection =
   | { kind: "inbox" }
-  // «Все» с условиями фильтра (пустой фильтр — все задачи; готовые и сохранённые виды — свои условия)
+  // «Все» с условиями фильтра (пустой фильтр — все задачи; готовые и сохранённые подборки — свои условия)
   | { kind: "all"; filter: TaskFilter }
   | { kind: "copies" }
   | { kind: "time" }
@@ -41,6 +49,108 @@ export function AppShell() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [openTask, setOpenTask] = useState<OpenTask>(null);
   const [nav, setNav] = useState<TaskNav>(null);
+  const [toast, setToast] = useState<Toast | null>(null);
+  // Задача, с которой последний раз работали клавишами Shift+X / Shift+S: после Shift+X её строка
+  // уходит в выполненные и фокус теряется, а повторное нажатие должно вернуть её обратно
+  const [lastTaskId, setLastTaskId] = useState<string | null>(null);
+  // Окна: быстрый ввод (с начальным текстом из палитры), палитра команд, шпаргалка по клавишам
+  const [quickAdd, setQuickAdd] = useState<{ text: string } | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  // Вид экрана «Все»: список или календарь (Shift+V переключает)
+  const [allMode, setAllMode] = useState<"list" | "calendar">("list");
+
+  // Горячие клавиши. Ctrl+K (Cmd+K) работает везде, остальные — только вне полей ввода и окон.
+  // Буквы — по физической клавише (event.code), поэтому работают и в русской раскладке; «?» — по символу.
+  // Обработчик пересоздаётся при каждой отрисовке и всегда видит актуальное состояние.
+  useEffect(() => {
+    if (snapshot === null) return;
+    const data = snapshot.data;
+    const onKey = (e: KeyboardEvent) => {
+      // Зажатая клавиша повторяет нажатие — повторы не считаем, иначе статус и таймер «мигали» бы
+      if (e.defaultPrevented || e.isComposing || e.repeat) return;
+      const target = e.target instanceof Element ? e.target : null;
+      const typing = target?.closest("input, textarea, select, [contenteditable='true']") != null;
+      // Esc закрывает сообщение внизу экрана (окна закрываются сами — браузером). В поле ввода Esc
+      // отменяет правку, и сообщение (например, с «Отменить») остаётся
+      if (e.key === "Escape" && toast && !typing && !paletteOpen && !helpOpen && quickAdd === null) {
+        setToast(null);
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.code === "KeyK") {
+        e.preventDefault();
+        setQuickAdd(null);
+        setHelpOpen(false);
+        setPaletteOpen(true);
+        return;
+      }
+      if (typing || paletteOpen || helpOpen || quickAdd !== null || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key === "?") {
+        e.preventDefault();
+        setHelpOpen(true);
+        return;
+      }
+      if (!e.shiftKey) return;
+      // Текущая задача — строка с фокусом клавиатуры, иначе задача, с которой только что работали клавишами,
+      // иначе задача с открытой карточкой (пока карточка на экране). «Только что работали» сбрасывается,
+      // когда открывают другую карточку или переходят на другой экран.
+      const row = document.activeElement?.closest("[data-task-id]");
+      const focusedId = row instanceof HTMLElement ? row.dataset.taskId : undefined;
+      const task =
+        data.tasks.find((t) => t.id === focusedId) ??
+        data.tasks.find((t) => t.id === lastTaskId) ??
+        data.tasks.find((t) => isTaskOpen(openTask, t));
+      const needTask = () => setToast({ kind: "info", text: "Сначала выберите задачу: откройте её карточку или перейдите к строке клавишей Tab." });
+      switch (e.code) {
+        case "KeyK":
+          setPaletteOpen(true);
+          break;
+        case "KeyN":
+          setQuickAdd({ text: "" });
+          break;
+        case "KeyV":
+          if (selection.kind === "all") setAllMode(allMode === "list" ? "calendar" : "list");
+          else setToast({ kind: "info", text: "Список и календарь переключаются на экране «Все»." });
+          break;
+        case "KeyX":
+          if (!task) needTask();
+          else {
+            const done = task.status === "done";
+            changeStatus(task.id, done ? "todo" : "done");
+            setLastTaskId(task.id);
+            // Открытая карточка остаётся открытой и переезжает вместе с задачей (выполненные раскроются)
+            setOpenTask((o) => (o && o.id === task.id ? { id: task.id, done: !done } : o));
+            setToast({
+              kind: "status",
+              taskId: task.id,
+              text: done ? `С задачи «${task.title}» снята отметка о выполнении.` : `Задача «${task.title}» отмечена выполненной.`,
+              undoStatus: task.status,
+            });
+          }
+          break;
+        case "KeyS":
+          if (!task) needTask();
+          else if (data.timer?.taskId === task.id) {
+            setLastTaskId(task.id);
+            stopAndAsk();
+          }
+          else {
+            // Нажатие клавиши — действие пользователя: после него браузер разрешит звук напоминания
+            void unlockAudio();
+            setLastTaskId(task.id);
+            if (startTimer(task.id) === "done") {
+              setToast({ kind: "info", text: `Задача «${task.title}» выполнена — таймер не запускается. Смените статус, чтобы снова работать над ней.` });
+            } else showStopPrompt(null);
+          }
+          break;
+        default:
+          return;
+      }
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
 
   // На сервере и до чтения localStorage данных ещё нет
   if (snapshot === null) {
@@ -58,15 +168,28 @@ export function AppShell() {
     setMenuOpen(false);
     setOpenTask(null);
     setNav(null);
+    setLastTaskId(null);
+  };
+
+  const appUi = {
+    notify: setToast,
+    openQuickAdd: (text = "") => setQuickAdd({ text }),
+    openPalette: () => setPaletteOpen(true),
+    openHelp: () => setHelpOpen(true),
+    select,
   };
 
   const taskUi = {
     openTask,
     nav,
     // Сверяем и признак «выполнена»: после смены статуса карточка уже скрыта, и клик должен её открыть
-    toggleTask: (task: Task) =>
-      setOpenTask(isTaskOpen(openTask, task) ? null : { id: task.id, done: task.status === "done" }),
+    toggleTask: (task: Task) => {
+      setOpenTask(isTaskOpen(openTask, task) ? null : { id: task.id, done: task.status === "done" });
+      setLastTaskId(null);
+    },
     // Переход к задаче: экран её проекта, цели или «Неразобранные», карточка открыта
+    // Статус задачи с открытой карточкой поменяли не из неё (Shift+X, «Отменить») — карточка остаётся открытой
+    syncOpen: (taskId: string, done: boolean) => setOpenTask((o) => (o && o.id === taskId ? { id: taskId, done } : o)),
     goToTask: (taskId: string) => {
       const task = data.tasks.find((t) => t.id === taskId);
       if (!task) return;
@@ -78,6 +201,7 @@ export function AppShell() {
             : { kind: "inbox" },
       );
       setMenuOpen(false);
+      setLastTaskId(null);
       setOpenTask({ id: task.id, done: task.status === "done" });
       setNav({ id: task.id, seq: (nav?.seq ?? 0) + 1 });
     },
@@ -85,11 +209,13 @@ export function AppShell() {
 
   return (
     // Любой клик или клавиша — действие пользователя: после него браузер разрешит звук напоминания
+    <AppUiContext value={appUi}>
     <TaskUiContext value={taskUi}>
     <div className="flex min-h-full flex-1 flex-col md:flex-row" onPointerDownCapture={unlockAudio} onKeyDownCapture={unlockAudio}>
       <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3 md:hidden dark:border-zinc-800">
         <span className="font-semibold">GoalFlow</span>
         <div className="flex items-center gap-1">
+          <KeyboardHelpButton />
           <ThemeToggle />
           <button
             type="button"
@@ -108,7 +234,10 @@ export function AppShell() {
       >
         <div className="mb-4 hidden items-center justify-between pl-2 md:flex">
           <p className="text-lg font-semibold">GoalFlow</p>
-          <ThemeToggle />
+          <div className="flex items-center gap-1">
+            <KeyboardHelpButton />
+            <ThemeToggle />
+          </div>
         </div>
         <div className="space-y-5">
           <Sidebar data={data} selection={current} onSelect={select} />
@@ -150,7 +279,13 @@ export function AppShell() {
           ) : current.kind === "time" ? (
             <TimeView data={data} />
           ) : current.kind === "all" ? (
-            <AllTasksView data={data} filter={current.filter} onFilter={(filter) => setSelection({ kind: "all", filter })} />
+            <AllTasksView
+              data={data}
+              filter={current.filter}
+              onFilter={(filter) => setSelection({ kind: "all", filter })}
+              mode={allMode}
+              onMode={setAllMode}
+            />
           ) : current.kind === "copies" ? (
             // key: когда копии меняются, экран начинается заново — старое сообщение об ошибке не остаётся
             <CopiesView key={`${copies.beforeImport}|${copies.broken?.at}`} copies={copies} />
@@ -159,7 +294,36 @@ export function AppShell() {
           )}
         </div>
       </main>
+
+      <ToastBar toast={toast} />
+      <Dialog open={quickAdd !== null} onClose={() => setQuickAdd(null)} label="Быстрый ввод задачи">
+        <div className="space-y-3">
+          <h2 className="text-lg font-semibold">Новая задача</h2>
+          <QuickAdd
+            data={data}
+            defaultParent={defaultParentOf(current)}
+            placeholder="Название и метки — Enter, чтобы добавить"
+            autoFocus
+            initialText={quickAdd?.text ?? ""}
+            onAdded={() => setQuickAdd(null)}
+          />
+        </div>
+      </Dialog>
+      <Dialog open={paletteOpen} onClose={() => setPaletteOpen(false)} label="Палитра команд">
+        <Palette
+          data={data}
+          onClose={() => setPaletteOpen(false)}
+          onSelect={select}
+          onGoToTask={taskUi.goToTask}
+          onQuickAdd={(text) => setQuickAdd({ text })}
+          onHelp={() => setHelpOpen(true)}
+        />
+      </Dialog>
+      <Dialog open={helpOpen} onClose={() => setHelpOpen(false)} label="Горячие клавиши">
+        <KeyboardHelp />
+      </Dialog>
     </div>
     </TaskUiContext>
+    </AppUiContext>
   );
 }

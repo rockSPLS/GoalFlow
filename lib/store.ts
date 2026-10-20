@@ -393,27 +393,51 @@ export function deleteProject(id: string) {
 
 // --- Задачи ---
 
-export function addTask(title: string, parent: Parent): string | null {
+// Поля, которые можно задать сразу при создании (быстрый ввод)
+export type NewTaskFields = {
+  tags?: string[];
+  priority?: Priority | null;
+  deadline?: string | null;
+  weight?: Weight | null;
+};
+
+export function addTask(title: string, parent: Parent, fields: NewTaskFields = {}): string | null {
   const clean = cleanTitle(title);
   if (!clean) return null;
   const createdAt = now();
-  const task: Task = {
-    id: newId(),
-    title: clean,
-    status: "todo",
-    weight: null,
-    ...parentFields(parent),
-    description: "",
-    deadline: null,
-    priority: null,
-    tags: [],
-    relatedTaskIds: [],
-    createdAt,
-    doneAt: null,
-    statusHistory: [{ status: "todo", at: createdAt }],
-  };
-  update((d) => ({ ...d, tasks: [...d.tasks, task] }));
-  return task.id;
+  const id = newId();
+  const deadline = fields.deadline && dayDate.safeParse(fields.deadline).success ? fields.deadline : null;
+  update((d) => {
+    // Теги — как при добавлении в карточке: уже известный тег берётся в записанном написании,
+    // новый запоминается в справочнике; повторы и лишнее сверх предела отбрасываются
+    let library = d.tags;
+    const tags: string[] = [];
+    for (const raw of fields.tags ?? []) {
+      const tag = raw.trim().replace(/\s+/g, " ");
+      if (!tag || tag.length > TAG_MAX || tags.length >= TAGS_PER_TASK) continue;
+      if (tags.some((tg) => tagKey(tg) === tagKey(tag))) continue;
+      const known = [...library, ...d.tasks.flatMap((t) => t.tags)].find((tg) => tagKey(tg) === tagKey(tag));
+      if (!library.some((tg) => tagKey(tg) === tagKey(tag)) && library.length < TAG_LIBRARY_MAX) library = [...library, known ?? tag];
+      tags.push(known ?? tag);
+    }
+    const task: Task = {
+      id,
+      title: clean,
+      status: "todo",
+      weight: fields.weight ?? null,
+      ...parentFields(parent),
+      description: "",
+      deadline,
+      priority: fields.priority ?? null,
+      tags,
+      relatedTaskIds: [],
+      createdAt,
+      doneAt: null,
+      statusHistory: [{ status: "todo", at: createdAt }],
+    };
+    return { ...d, tags: library, tasks: [...d.tasks, task] };
+  });
+  return id;
 }
 
 const HISTORY_MAX = 1000;
@@ -584,13 +608,13 @@ export function deleteTask(id: string) {
   }));
 }
 
-// --- Сохранённые виды ---
+// --- Сохранённые подборки (в данных — views) ---
 
-// Возвращает id нового вида или текст ошибки
+// Возвращает id новой подборки или текст ошибки
 export function addView(name: string, filter: TaskFilter): { id: string } | { error: string } {
   const clean = name.trim().slice(0, VIEW_NAME_MAX);
-  if (!clean) return { error: "Введите название вида." };
-  if (getSnapshot().data.views.length >= VIEWS_MAX) return { error: `Видов может быть не больше ${VIEWS_MAX}.` };
+  if (!clean) return { error: "Введите название подборки." };
+  if (getSnapshot().data.views.length >= VIEWS_MAX) return { error: `Подборок может быть не больше ${VIEWS_MAX}.` };
   const view: SavedView = { id: newId(), name: clean, filter };
   update((d) => ({ ...d, views: [...d.views, view] }));
   return { id: view.id };

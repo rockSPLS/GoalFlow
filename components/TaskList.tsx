@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Circle, CircleCheck, CircleDot, CirclePause, Eye, Flag, X } from "lucide-react";
+import { Circle, CircleCheck, CircleDot, CirclePause, ClockAlert, Eye, Flag, X } from "lucide-react";
 import { STATUS_LABELS, PRIORITY_LABELS, WEIGHT_HINTS, type AppData, type Status, type Task, type Weight } from "@/lib/model";
 import { deadlineState, tagColor, todayKey } from "@/lib/filters";
 import { formatDay, formatMinutes, sumMinutes } from "@/lib/time";
@@ -106,6 +106,18 @@ export function DeadlineText({ task, className = "" }: { task: Task; className?:
   );
 }
 
+// Стрелки ↑↓ на названии задачи — фокус на соседнюю задачу (в порядке на экране)
+function moveFocus(e: React.KeyboardEvent<HTMLButtonElement>) {
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  const titles = [...document.querySelectorAll<HTMLButtonElement>("[data-task-title]")];
+  const next = titles[titles.indexOf(e.currentTarget) + (e.key === "ArrowDown" ? 1 : -1)];
+  if (next) {
+    e.preventDefault();
+    next.focus();
+    next.scrollIntoView({ block: "nearest" });
+  }
+}
+
 // Строка задачи. dragHandle — ручка для перетаскивания в начале строки (в календаре)
 export function TaskRow({
   task,
@@ -139,7 +151,7 @@ export function TaskRow({
   }, [open, nav, task.id]);
 
   return (
-    <li ref={rowRef} className="scroll-mt-4 py-1">
+    <li ref={rowRef} data-task-id={task.id} className="scroll-mt-4 py-1">
       <div className="flex min-h-11 items-center gap-2 px-2">
         {dragHandle}
         <button
@@ -151,7 +163,20 @@ export function TaskRow({
         >
           <StatusIcon status={task.status} />
         </button>
-        <button type="button" onClick={() => toggleTask(task)} aria-expanded={open} className="min-w-0 flex-1 text-left">
+        {/* Просроченная задача — значок «время вышло» перед названием (дата дедлайна справа тоже красная) */}
+        {deadlineState(task, todayKey()) === "overdue" && (
+          <span title="Просрочено" className="shrink-0">
+            <ClockAlert size={16} className="text-red-600 dark:text-red-400" aria-hidden="true" />
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={() => toggleTask(task)}
+          onKeyDown={moveFocus}
+          data-task-title
+          aria-expanded={open}
+          className="min-w-0 flex-1 rounded text-left"
+        >
           <span className={`block truncate text-sm ${done ? "text-zinc-400 line-through" : ""}`}>{task.title}</span>
           {showPath && <span className="block truncate text-xs text-zinc-500">{pathOf(data, task)}</span>}
         </button>

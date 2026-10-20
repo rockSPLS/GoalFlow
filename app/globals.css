@@ -28,3 +28,9 @@ body {
   background: var(--background);
   color: var(--foreground);
 }
+
+/* Заметная рамка фокуса при работе с клавиатуры (при клике мышью её нет) */
+:where(button, a, summary, [tabindex]):focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+}

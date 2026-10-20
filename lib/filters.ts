@@ -1,7 +1,7 @@
 import { taskFilterSchema, type AppData, type Task, type TaskFilter } from "./model";
 import { startOfWeek, addDays, toDateInputValue } from "./time";
 
-// Фильтры задач, готовые виды, состояние дедлайна, цвет тега
+// Фильтры задач, готовые подборки, состояние дедлайна, цвет тега
 
 export const EMPTY_FILTER: TaskFilter = taskFilterSchema.parse({});
 
@@ -13,16 +13,22 @@ export type ReadyView = { id: string; name: string; filter: TaskFilter };
 export const READY_VIEWS: ReadyView[] = [
   { id: "ready:no-goal", name: "Без цели", filter: { ...EMPTY_FILTER, noGoal: true } },
   { id: "ready:stuck", name: "Застряли (больше 4 ч)", filter: { ...EMPTY_FILTER, over4h: true } },
-  { id: "ready:week", name: "Дедлайн на этой неделе", filter: { ...EMPTY_FILTER, deadline: "week" } },
-  { id: "ready:overdue", name: "Просроченные", filter: { ...EMPTY_FILTER, deadline: "overdue" } },
+  { id: "ready:week", name: "Дедлайн на этой неделе", filter: { ...EMPTY_FILTER, deadline: ["week"] } },
+  { id: "ready:overdue", name: "Просроченные", filter: { ...EMPTY_FILTER, deadline: ["overdue"] } },
 ];
+
+// Одинаковые ли наборы значений (порядок выбора и регистр тегов не важны)
+function sameSet(a: readonly string[], b: readonly string[]): boolean {
+  const norm = (list: readonly string[]) => [...new Set(list.map((v) => v.toLocaleLowerCase("ru")))].sort().join("\n");
+  return norm(a) === norm(b);
+}
 
 export function sameFilter(a: TaskFilter, b: TaskFilter): boolean {
   return (
-    a.status === b.status &&
-    a.priority === b.priority &&
-    a.tag === b.tag &&
-    a.deadline === b.deadline &&
+    sameSet(a.status, b.status) &&
+    sameSet(a.priority, b.priority) &&
+    sameSet(a.tags, b.tags) &&
+    sameSet(a.deadline, b.deadline) &&
     a.noGoal === b.noGoal &&
     a.over4h === b.over4h
   );
@@ -47,7 +53,7 @@ export function deadlineState(task: Task, today: string): "overdue" | "today" | 
 
 const sameTag = (a: string, b: string) => a.toLocaleLowerCase("ru") === b.toLocaleLowerCase("ru");
 
-// Задачи, подходящие под все заданные условия
+// Задачи, подходящие под все заданные условия (внутри условия — любое из выбранных значений)
 export function filterTasks(data: AppData, tasks: Task[], f: TaskFilter, today: string): Task[] {
   // «Эта неделя» — от сегодня до воскресенья: прошедшие дни недели уже попадают в «Просрочено»
   const weekEnd = toDateInputValue(addDays(startOfWeek(new Date(`${today}T12:00:00`)), 6));
@@ -56,12 +62,19 @@ export function filterTasks(data: AppData, tasks: Task[], f: TaskFilter, today: 
   const minutes = new Map<string, number>();
   if (f.over4h) for (const e of data.timeEntries) minutes.set(e.taskId, (minutes.get(e.taskId) ?? 0) + e.minutes);
   return tasks.filter((t) => {
-    if (f.status !== null && t.status !== f.status) return false;
-    if (f.priority === "none" ? t.priority !== null : f.priority !== null && t.priority !== f.priority) return false;
-    if (f.tag !== null && !t.tags.some((tg) => sameTag(tg, f.tag ?? ""))) return false;
-    if (f.deadline === "overdue" && deadlineState(t, today) !== "overdue") return false;
-    if (f.deadline === "today" && t.deadline !== today) return false;
-    if (f.deadline === "week" && (t.deadline === null || t.deadline < today || t.deadline > weekEnd)) return false;
+    if (f.status.length > 0 && !f.status.includes(t.status)) return false;
+    if (f.priority.length > 0 && !f.priority.includes(t.priority ?? "none")) return false;
+    if (f.tags.length > 0 && !t.tags.some((tg) => f.tags.some((ft) => sameTag(tg, ft)))) return false;
+    if (f.deadline.length > 0) {
+      const fits = f.deadline.some((d) =>
+        d === "overdue"
+          ? deadlineState(t, today) === "overdue"
+          : d === "today"
+            ? t.deadline === today
+            : t.deadline !== null && t.deadline >= today && t.deadline <= weekEnd,
+      );
+      if (!fits) return false;
+    }
     if (f.noGoal && (t.projectId !== null ? (projectGoal.get(t.projectId) ?? null) : t.goalId) !== null) return false;
     if (f.over4h && (minutes.get(t.id) ?? 0) <= STUCK_MINUTES) return false;
     return true;

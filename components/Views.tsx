@@ -1,25 +1,24 @@
 "use client";
 
-import { useState } from "react";
 import { Trash } from "lucide-react";
 import type { AppData, Goal, Project, TaskFilter } from "@/lib/model";
 import { filterTasks, isEmptyFilter, READY_VIEWS, sameFilter, todayKey } from "@/lib/filters";
 import { goalTasks, inboxTasks, progressOf, projectTasks } from "@/lib/progress";
 import {
   addProject,
-  addTask,
   deleteGoal,
   deleteProject,
-  deleteView,
   renameGoal,
   renameProject,
   setProjectGoal,
 } from "@/lib/store";
 import { formatMinutes, minutesForTasks } from "@/lib/time";
 import { CalendarView } from "./CalendarView";
+import { Collections } from "./Collections";
 import { FilterPanel } from "./FilterPanel";
 import { TaskList } from "./TaskList";
-import { AddInline, EditableTitle, ProgressBar, TextInput } from "./ui";
+import { QuickAdd } from "./QuickAdd";
+import { AddInline, EditableTitle, ProgressBar } from "./ui";
 import type { Selection } from "./AppShell";
 
 // Экраны основной области: «Неразобранные», «Все», цель, проект
@@ -50,7 +49,7 @@ export function InboxView({ data }: { data: AppData }) {
         <h1 className="text-2xl font-semibold tracking-tight">Неразобранные</h1>
         <p className="text-sm text-zinc-500">Задачи без цели и проекта. Разложить их можно в карточке задачи.</p>
       </div>
-      <TextInput placeholder="Новая задача — Enter, чтобы добавить" ariaLabel="Новая задача" onSubmit={(t) => addTask(t, { kind: "inbox" })} />
+      <QuickAdd data={data} defaultParent={{ kind: "inbox" }} placeholder="Новая задача — Enter, чтобы добавить" />
       <TaskList tasks={inboxTasks(data)} data={data} emptyText="Неразобранных задач нет." />
     </div>
   );
@@ -63,31 +62,32 @@ function modeClass(active: boolean) {
 }
 
 // Все задачи одним списком или календарём; у каждой видно, где она лежит.
-// Условия фильтра действуют и на список, и на календарь; готовый или сохранённый вид — те же условия под именем.
-export function AllTasksView({ data, filter, onFilter }: { data: AppData; filter: TaskFilter; onFilter: (f: TaskFilter) => void }) {
-  const [mode, setMode] = useState<"list" | "calendar">("list");
+// Условия фильтра действуют и на список, и на календарь; готовая или сохранённая подборка — те же условия под именем.
+export function AllTasksView({
+  data,
+  filter,
+  onFilter,
+  mode,
+  onMode,
+}: {
+  data: AppData;
+  filter: TaskFilter;
+  onFilter: (f: TaskFilter) => void;
+  // Список или календарь; хранится в AppShell, чтобы его переключала и клавиша Shift+V
+  mode: "list" | "calendar";
+  onMode: (mode: "list" | "calendar") => void;
+}) {
+  const setMode = onMode;
   const tasks = filterTasks(data, data.tasks, filter, todayKey());
-  const ready = READY_VIEWS.find((v) => sameFilter(v.filter, filter));
-  // Сохранённый вид можно удалить, даже если его условия совпали с готовым (например, после восстановления из файла)
-  const saved = data.views.find((v) => sameFilter(v.filter, filter));
-  const viewName = ready?.name ?? saved?.name;
+  // Название подборки, чьи условия сейчас стоят (готовой или своей)
+  const viewName = [...READY_VIEWS, ...data.views].find((v) => sameFilter(v.filter, filter))?.name;
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">{viewName ?? "Все задачи"}</h1>
-            {saved && (
-              <DeleteButton
-                label="Удалить вид"
-                onClick={() => {
-                  if (window.confirm(`Удалить вид «${saved.name}»? Задачи останутся.`)) deleteView(saved.id);
-                }}
-              />
-            )}
-          </div>
+          <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">{viewName ?? "Все задачи"}</h1>
           <p className="text-sm text-zinc-500">
-            {viewName ? "Задачи по условиям вида." : "Задачи из всех целей и проектов."} Новая задача отсюда попадает в «Неразобранные».
+            {viewName ? "Задачи по условиям подборки." : "Задачи из всех целей и проектов."} Новая задача отсюда попадает в «Неразобранные».
           </p>
         </div>
         <div role="group" aria-label="Вид списка" className="flex overflow-hidden rounded-md border border-zinc-300 dark:border-zinc-700">
@@ -99,15 +99,16 @@ export function AllTasksView({ data, filter, onFilter }: { data: AppData; filter
           </button>
         </div>
       </div>
+      <Collections data={data} filter={filter} onFilter={onFilter} />
       <FilterPanel data={data} filter={filter} onFilter={onFilter} />
-      <TextInput placeholder="Новая задача — Enter, чтобы добавить" ariaLabel="Новая задача" onSubmit={(t) => addTask(t, { kind: "inbox" })} />
+      <QuickAdd data={data} defaultParent={{ kind: "inbox" }} placeholder="Новая задача — Enter, чтобы добавить" />
       {mode === "list" ? (
         <TaskList
           tasks={tasks}
           data={data}
           emptyText={isEmptyFilter(filter) ? "Задач пока нет." : "Нет задач по этим условиям."}
           showPath
-          doneOpen={filter.status === "done"}
+          doneOpen={filter.status.includes("done")}
         />
       ) : (
         <CalendarView tasks={tasks} data={data} />
@@ -141,11 +142,7 @@ export function GoalView({ data, goal, onSelect }: { data: AppData; goal: Goal; 
 
       <section className="space-y-2">
         <h2 className="text-sm font-medium text-zinc-500">Задачи цели без проекта</h2>
-        <TextInput
-          placeholder="Новая задача цели — Enter, чтобы добавить"
-          ariaLabel="Новая задача цели"
-          onSubmit={(t) => addTask(t, { kind: "goal", id: goal.id })}
-        />
+        <QuickAdd data={data} defaultParent={{ kind: "goal", id: goal.id }} placeholder="Новая задача цели — Enter, чтобы добавить" />
         <TaskList tasks={directTasks} data={data} emptyText="Задач без проекта нет." />
       </section>
 
@@ -215,11 +212,7 @@ export function ProjectView({ data, project, onSelect }: { data: AppData; projec
         <ProgressBar progress={progressOf(projectTasks(data, project.id))} label={`Прогресс проекта «${project.title}»`} />
         <p className="text-sm text-zinc-500">Потрачено: {spentText(data, projectTasks(data, project.id))}</p>
       </div>
-      <TextInput
-        placeholder="Новая задача проекта — Enter, чтобы добавить"
-        ariaLabel="Новая задача проекта"
-        onSubmit={(t) => addTask(t, { kind: "project", id: project.id })}
-      />
+      <QuickAdd data={data} defaultParent={{ kind: "project", id: project.id }} placeholder="Новая задача проекта — Enter, чтобы добавить" />
       <TaskList tasks={projectTasks(data, project.id)} data={data} emptyText="В проекте пока нет задач." />
     </div>
   );

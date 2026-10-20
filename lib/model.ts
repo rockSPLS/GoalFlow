@@ -125,16 +125,32 @@ export const timerSchema = z.object({
 
 export const DEADLINE_FILTERS = ["overdue", "today", "week"] as const;
 
-// Условия фильтра задач; null / false — условие не задано
-export const taskFilterSchema = z.object({
-  status: z.enum(STATUSES).nullable().default(null),
+// Условия фильтра задач. В каждом списке — «любое из выбранного», пустой список — условие не задано;
+// условия между собой складываются через «и».
+const taskFilterObject = z.object({
+  status: z.array(z.enum(STATUSES)).max(STATUSES.length).default([]),
   // "none" — задачи без приоритета
-  priority: z.enum([...PRIORITIES, "none"]).nullable().default(null),
-  tag: tag.nullable().default(null),
-  deadline: z.enum(DEADLINE_FILTERS).nullable().default(null),
+  priority: z.array(z.enum([...PRIORITIES, "none"])).max(PRIORITIES.length + 1).default([]),
+  tags: z.array(tag).max(TAG_LIBRARY_MAX).default([]),
+  deadline: z.array(z.enum(DEADLINE_FILTERS)).max(DEADLINE_FILTERS.length).default([]),
   noGoal: z.boolean().default(false),
   over4h: z.boolean().default(false),
 });
+
+// До мультивыбора в условиях было одно значение или null (и поле tag вместо tags) —
+// такие сохранённые наборы переводятся в новый формат при загрузке
+const asList = (value: unknown) => (value === null || value === undefined ? undefined : Array.isArray(value) ? value : [value]);
+export const taskFilterSchema = z.preprocess((value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const { tag: oldTag, ...rest } = value as Record<string, unknown>;
+  return {
+    ...rest,
+    status: asList(rest.status),
+    priority: asList(rest.priority),
+    deadline: asList(rest.deadline),
+    tags: rest.tags === undefined ? asList(oldTag) : rest.tags,
+  };
+}, taskFilterObject);
 
 // Сохранённый вид — сочетание условий под своим именем
 export const savedViewSchema = z.object({

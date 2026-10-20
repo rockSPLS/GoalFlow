@@ -32,6 +32,17 @@ function subscribe(onChange: () => void) {
   };
 }
 
+// Переключить тему (кнопкой или из палитры команд)
+export function toggleTheme() {
+  const next: Theme = readTheme() === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try {
+    localStorage.setItem(THEME_KEY, next);
+  } catch {
+    // localStorage недоступен (например, приватный режим) — тема просто не запомнится
+  }
+}
+
 export function ThemeToggle() {
   // Серверный снимок обязателен для useSyncExternalStore. Сейчас кнопка рисуется только
   // в браузере (внутри AppShell после загрузки данных), но если её перенесут в серверную
@@ -51,23 +62,13 @@ export function ThemeToggle() {
     }
   }, []);
 
-  function toggle() {
-    const next: Theme = isDark ? "light" : "dark";
-    document.documentElement.dataset.theme = next;
-    try {
-      localStorage.setItem(THEME_KEY, next);
-    } catch {
-      // localStorage недоступен (например, приватный режим) — тема просто не запомнится
-    }
-  }
-
   // Подпись говорит, что сделает нажатие
   const label = isDark ? "Включить светлую тему" : "Включить тёмную тему";
 
   return (
     <button
       type="button"
-      onClick={toggle}
+      onClick={toggleTheme}
       aria-label={label}
       title={label}
       className="rounded-md p-2 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
