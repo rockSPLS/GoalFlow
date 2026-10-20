@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
   subsets: ["latin", "cyrillic"],
 });
 
-const description = "Задачи, цели и учёт времени в одном месте. Данные хранятся в вашем браузере.";
+const description = "Каждая задача — шаг к цели, каждая минута на счету. Всё — в едином планировщике.";
 
 export const metadata: Metadata = {
   // Адрес сайта: из него собираются полные ссылки на картинку превью (og:image) —
