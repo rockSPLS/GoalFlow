@@ -117,6 +117,9 @@ export function TaskEditor({ task, data, onClose, inWindow = false }: { task: Ta
             value={title}
             maxLength={TITLE_MAX}
             aria-label="Название задачи"
+            // В окне при переходе к связанной задаче карточка создаётся заново — фокус ставится в её название,
+            // иначе он терялся бы в начале страницы. (При открытии окна фокус ставит сам браузер.)
+            autoFocus={inWindow}
             onChange={(e) => setTitle(e.target.value)}
             onBlur={saveTitle}
             onKeyDown={(e) => {
@@ -491,7 +494,11 @@ function TagsField({ task, data }: { task: Task; data: AppData }) {
                 setActive(-1);
               }}
               onFocus={() => setOpen(true)}
-              onBlur={() => setOpen(false)}
+              // Уходя из поля, сбрасываем и выбор: вернувшись, Enter не должен добавить подсказку, выбранную в прошлый раз
+              onBlur={() => {
+                setOpen(false);
+                setActive(-1);
+              }}
               onKeyDown={(e) => {
                 if (e.nativeEvent.isComposing) return;
                 if (e.key === "ArrowDown") {
@@ -591,11 +598,16 @@ function TagsField({ task, data }: { task: Task; data: AppData }) {
   );
 }
 
-// Связанные задачи: переход к связанной, отвязка, поиск задачи для новой связи
+// Связанные задачи: переход к связанной, отвязка, поиск задачи для новой связи.
+// Поиск — как автокомплит тегов: стрелки ↑↓ выбирают задачу, Enter связывает выбранную, Esc закрывает список,
+// клик по задаче тоже связывает. По умолчанию ничего не выбрано, и Enter без выбора ничего не делает.
 function RelatedField({ task, data }: { task: Task; data: AppData }) {
   const { goToTask } = useTaskUi();
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(-1);
+  const listId = useId();
   const related = task.relatedTaskIds
     .map((id) => data.tasks.find((t) => t.id === id))
     .filter((t): t is Task => t !== undefined);
@@ -605,6 +617,23 @@ function RelatedField({ task, data }: { task: Task; data: AppData }) {
         .filter((t) => t.id !== task.id && !task.relatedTaskIds.includes(t.id) && t.title.toLocaleLowerCase("ru").includes(needle))
         .slice(0, 8)
     : [];
+  const activeIndex = Math.min(active, matches.length - 1);
+  const shown = open && matches.length > 0;
+
+  // Подсвеченная стрелками задача всегда видна
+  useEffect(() => {
+    if (shown && activeIndex >= 0) document.getElementById(`${listId}-${activeIndex}`)?.scrollIntoView({ block: "nearest" });
+  }, [shown, activeIndex, listId]);
+
+  const link = (other: Task) => {
+    const result = linkTasks(task.id, other.id);
+    setError(result);
+    if (result === null) {
+      setQuery("");
+      setActive(-1);
+    }
+  };
+
   return (
     <div className="space-y-2">
       <p className="text-xs text-zinc-500">Связь видна в обеих задачах и не влияет на прогресс и время.</p>
@@ -627,29 +656,78 @@ function RelatedField({ task, data }: { task: Task; data: AppData }) {
         value={query}
         placeholder="Найти задачу, чтобы связать"
         aria-label="Найти задачу, чтобы связать"
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={shown}
+        aria-controls={listId}
+        aria-activedescendant={shown && activeIndex >= 0 ? `${listId}-${activeIndex}` : undefined}
+        aria-describedby={`${listId}-hint`}
         onChange={(e) => {
           setQuery(e.target.value);
           setError(null);
+          setOpen(true);
+          setActive(-1);
+        }}
+        onFocus={() => setOpen(true)}
+        // Уходя из поля, сбрасываем и выбор: вернувшись, Enter не должен связать задачу, выбранную в прошлый раз
+        onBlur={() => {
+          setOpen(false);
+          setActive(-1);
+        }}
+        onKeyDown={(e) => {
+          if (e.nativeEvent.isComposing) return;
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setOpen(true);
+            setActive(Math.min(activeIndex + 1, matches.length - 1));
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setActive(Math.max(activeIndex - 1, -1));
+          } else if (e.key === "Enter") {
+            e.preventDefault();
+            if (shown && activeIndex >= 0) link(matches[activeIndex]);
+          } else if (e.key === "Escape" && shown) {
+            // Esc закрывает только список, а не окно с карточкой
+            e.preventDefault();
+            e.stopPropagation();
+            setOpen(false);
+            setActive(-1);
+          }
         }}
         className={`${fieldClass} w-full`}
       />
-      {needle && matches.length === 0 && <p className="text-xs text-zinc-500">Ничего не найдено.</p>}
-      {matches.length > 0 && (
-        <ul className="space-y-0.5 text-sm">
-          {matches.map((t) => (
-            <li key={t.id}>
-              <button
-                type="button"
-                onClick={() => {
-                  const result = linkTasks(task.id, t.id);
-                  setError(result);
-                  if (result === null) setQuery("");
-                }}
-                className="w-full rounded-md px-2 py-1 text-left hover:bg-zinc-200 dark:hover:bg-zinc-800"
-              >
-                <span className="block truncate">{t.title}</span>
-                <span className="block truncate text-xs text-zinc-500">{pathOf(data, t)}</span>
-              </button>
+      <p id={`${listId}-hint`} className="sr-only">
+        Стрелки вверх и вниз — выбрать задачу, Enter — связать.
+      </p>
+      <p role="status" className="text-xs text-zinc-500 empty:hidden">
+        {needle && matches.length === 0 ? "Ничего не найдено." : ""}
+      </p>
+      {shown && (
+        <ul
+          id={listId}
+          role="listbox"
+          aria-label="Подходящие задачи"
+          // Нажатие на полосу прокрутки не должно уводить фокус из поля (иначе список закроется)
+          onMouseDown={(e) => e.preventDefault()}
+          className="max-h-60 space-y-0.5 overflow-auto text-sm"
+        >
+          {matches.map((t, i) => (
+            <li
+              key={t.id}
+              id={`${listId}-${i}`}
+              role="option"
+              aria-selected={i === activeIndex}
+              // mousedown, а не click: иначе поле потеряет фокус и список закроется раньше выбора
+              onMouseDown={(e) => {
+                e.preventDefault();
+                link(t);
+              }}
+              className={`cursor-pointer rounded-md px-2 py-1 ${
+                i === activeIndex ? "bg-zinc-200 dark:bg-zinc-700" : "hover:bg-zinc-200 dark:hover:bg-zinc-800"
+              }`}
+            >
+              <span className="block truncate">{t.title}</span>
+              <span className="block truncate text-xs text-zinc-500">{pathOf(data, t)}</span>
             </li>
           ))}
         </ul>
