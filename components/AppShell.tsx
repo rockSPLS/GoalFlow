@@ -12,6 +12,7 @@ import { BackupControls } from "./BackupControls";
 import { Dialog } from "./Dialog";
 import { CopiesView, ImportUndoButtons } from "./ImportUndo";
 import { KeyboardHelp, KeyboardHelpButton } from "./KeyboardHelp";
+import { Wordmark } from "./Logo";
 import { Palette } from "./Palette";
 import { QuickAdd } from "./QuickAdd";
 import { Sidebar } from "./Sidebar";
@@ -239,7 +240,8 @@ export function AppShell() {
     <TaskUiContext value={taskUi}>
     <div className="flex min-h-full flex-1 flex-col md:flex-row" onPointerDownCapture={unlockAudio} onKeyDownCapture={unlockAudio}>
       <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3 md:hidden dark:border-zinc-800">
-        <span className="font-semibold">GoalFlow</span>
+        {/* Высота строки 36 px — как у кнопок справа, поэтому крупная надпись не делает полосу выше */}
+        <Wordmark className="text-[28px] leading-9 font-semibold" />
         <div className="flex items-center gap-1">
           <KeyboardHelpButton />
           <ThemeToggle />
@@ -259,7 +261,7 @@ export function AppShell() {
         className={`${menuOpen ? "block" : "hidden"} border-b border-zinc-200 bg-zinc-50 p-4 md:block md:w-72 md:shrink-0 md:border-r md:border-b-0 dark:border-zinc-800 dark:bg-zinc-950`}
       >
         <div className="mb-4 hidden items-center justify-between pl-2 md:flex">
-          <p className="text-lg font-semibold">GoalFlow</p>
+          <Wordmark className="text-[28px] font-semibold" />
           <div className="flex items-center gap-1">
             <KeyboardHelpButton />
             <ThemeToggle />

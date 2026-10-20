@@ -21,21 +21,28 @@ export function KeyboardHelp() {
   return (
     <div className="space-y-3">
       <h2 className="text-lg font-semibold">Горячие клавиши</h2>
-      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
+      <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-2.5 text-[15px] leading-snug">
         {SHORTCUTS.map(([keys, what]) => (
           <div key={keys} className="contents">
             <dt>
-              <kbd className="rounded border border-zinc-300 bg-zinc-50 px-1.5 py-0.5 font-mono text-xs whitespace-nowrap dark:border-zinc-700 dark:bg-zinc-800">{keys}</kbd>
+              <kbd className="rounded border border-zinc-300 bg-zinc-50 px-1.5 py-0.5 font-mono text-[13px] whitespace-nowrap text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100">{keys}</kbd>
             </dt>
-            <dd className="text-zinc-700 dark:text-zinc-300">{what}</dd>
+            <dd className="text-zinc-800 dark:text-zinc-200">{what}</dd>
           </div>
         ))}
       </dl>
-      <p className="text-xs text-zinc-500">
-        Текущая задача — строка, на которой фокус. Если фокуса на строке нет — задача, с которой только что работали через
-        Shift+X или Shift+S, иначе задача с открытой карточкой. Клавиши с Shift не срабатывают, пока курсор в поле ввода. Клавиши с буквами работают
-        в любой раскладке. «?» нажимается там, где он есть в раскладке: Shift+7 в русской, Shift+/ в английской.
-      </p>
+      {/* Пояснения — отдельными пунктами и не мельче основного текста: сплошной мелкий абзац читался тяжело */}
+      <ul className="list-disc space-y-1.5 border-t border-zinc-200 pt-3 pl-5 text-sm leading-relaxed text-zinc-600 dark:border-zinc-700 dark:text-zinc-300">
+        <li>
+          Текущая задача — строка, на которой фокус. Если фокуса на строке нет — задача, с которой только что работали через
+          Shift+X или Shift+S, иначе задача с открытой карточкой.
+        </li>
+        <li>Клавиши с Shift не срабатывают, пока курсор в поле ввода.</li>
+        <li>
+          Клавиши с буквами работают в любой раскладке. «?» нажимается там, где он есть в раскладке: Shift+7 в русской,
+          Shift+/ в английской.
+        </li>
+      </ul>
     </div>
   );
 }

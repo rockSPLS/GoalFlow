@@ -13,9 +13,16 @@ const geistMono = Geist_Mono({
   subsets: ["latin", "cyrillic"],
 });
 
+const description = "Задачи, цели и учёт времени в одном месте. Данные хранятся в вашем браузере.";
+
 export const metadata: Metadata = {
+  // Адрес сайта: из него собираются полные ссылки на картинку превью (og:image) —
+  // относительную ссылку мессенджеры не найдут
+  metadataBase: new URL("https://goal-flow-planner.vercel.app"),
   title: "GoalFlow",
-  description: "Задачи, цели и учёт времени в одном месте. Данные хранятся в вашем браузере.",
+  description,
+  // Превью ссылки: название и подпись под картинкой (картинка — app/opengraph-image.tsx)
+  openGraph: { title: "GoalFlow", description, type: "website", locale: "ru_RU" },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

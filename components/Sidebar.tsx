@@ -32,32 +32,7 @@ export function Sidebar({ data, selection, onSelect }: Props) {
 
   return (
     <nav aria-label="Навигация" className="space-y-5">
-      <section>
-        <h2 className="mb-1 px-2 text-xs font-medium uppercase tracking-wide text-zinc-500">Задачи</h2>
-        <div className="space-y-0.5">
-          <button
-            type="button"
-            onClick={() => onSelect({ kind: "inbox" })}
-            aria-current={isSelected("inbox") ? "page" : undefined}
-            className={itemClass(isSelected("inbox"))}
-          >
-            <Inbox size={16} className="shrink-0" aria-hidden="true" />
-            <span className="flex-1 truncate">Неразобранные</span>
-            {openInbox > 0 && <span className="text-xs text-zinc-500">{openInbox}</span>}
-          </button>
-          <button
-            type="button"
-            onClick={() => onSelect({ kind: "all", filter: EMPTY_FILTER })}
-            aria-current={isSelected("all") ? "page" : undefined}
-            className={itemClass(isSelected("all"))}
-          >
-            <List size={16} className="shrink-0" aria-hidden="true" />
-            <span className="flex-1 truncate">Все</span>
-            {openAll > 0 && <span className="text-xs text-zinc-500">{openAll}</span>}
-          </button>
-        </div>
-      </section>
-
+      {/* Сверху вниз — от крупного к мелкому: цели, проекты без цели, затем задачи */}
       <section>
         <h2 className="mb-1 px-2 text-xs font-medium uppercase tracking-wide text-zinc-500">Цели</h2>
         <ul className="space-y-0.5">
@@ -126,6 +101,32 @@ export function Sidebar({ data, selection, onSelect }: Props) {
             if (id) onSelect({ kind: "project", id });
           }}
         />
+      </section>
+
+      <section>
+        <h2 className="mb-1 px-2 text-xs font-medium uppercase tracking-wide text-zinc-500">Задачи</h2>
+        <div className="space-y-0.5">
+          <button
+            type="button"
+            onClick={() => onSelect({ kind: "inbox" })}
+            aria-current={isSelected("inbox") ? "page" : undefined}
+            className={itemClass(isSelected("inbox"))}
+          >
+            <Inbox size={16} className="shrink-0" aria-hidden="true" />
+            <span className="flex-1 truncate">Неразобранные</span>
+            {openInbox > 0 && <span className="text-xs text-zinc-500">{openInbox}</span>}
+          </button>
+          <button
+            type="button"
+            onClick={() => onSelect({ kind: "all", filter: EMPTY_FILTER })}
+            aria-current={isSelected("all") ? "page" : undefined}
+            className={itemClass(isSelected("all"))}
+          >
+            <List size={16} className="shrink-0" aria-hidden="true" />
+            <span className="flex-1 truncate">Все</span>
+            {openAll > 0 && <span className="text-xs text-zinc-500">{openAll}</span>}
+          </button>
+        </div>
       </section>
 
       <button
