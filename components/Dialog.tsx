@@ -9,11 +9,14 @@ export function Dialog({
   onClose,
   label,
   children,
+  size = "mt-[12vh] w-[min(36rem,calc(100%-2rem))] overflow-visible",
 }: {
   open: boolean;
   onClose: () => void;
   label: string;
   children: ReactNode;
+  // Отступ сверху, ширина и прокрутка окна
+  size?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   // Нажатие мыши пришлось на фон: окно закрывается, только если и нажали, и отпустили на фоне
@@ -38,8 +41,8 @@ export function Dialog({
         // Клик пришёлся на сам <dialog>, то есть на затемнённый фон вокруг содержимого
         if (e.target === e.currentTarget && downOnBackdrop.current) onClose();
       }}
-      // overflow-visible: выпадающие подсказки не обрезаются краем окна
-      className="mx-auto mt-[12vh] overflow-visible w-[min(36rem,calc(100%-2rem))] rounded-xl border border-zinc-200 bg-white p-0 text-zinc-900 shadow-xl backdrop:bg-black/40 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
+      // overflow-visible (по умолчанию): выпадающие подсказки не обрезаются краем окна
+      className={`mx-auto ${size} rounded-xl border border-zinc-200 bg-white p-0 text-zinc-900 shadow-xl backdrop:bg-black/40 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100`}
     >
       {open && <div className="p-4">{children}</div>}
     </dialog>

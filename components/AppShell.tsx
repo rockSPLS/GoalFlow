@@ -20,7 +20,8 @@ import { changeStatus, stopAndAsk } from "./TimeParts";
 import { StopPromptBanner, TimerEffects } from "./TimerBanners";
 import { TimeView } from "./TimeView";
 import { ToastBar } from "./ToastBar";
-import { AllTasksView, GoalView, InboxView, ProjectView } from "./Views";
+import { TaskEditor } from "./TaskEditor";
+import { ALL_MODES, AllTasksView, GoalView, InboxView, ProjectView, type AllMode } from "./Views";
 import { AppUiContext, defaultParentOf, type Toast } from "./app-ui";
 import { isTaskOpen, TaskUiContext, type OpenTask, type TaskNav } from "./task-ui";
 
@@ -57,8 +58,10 @@ export function AppShell() {
   const [quickAdd, setQuickAdd] = useState<{ text: string } | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  // Вид экрана «Все»: список или календарь (Shift+V переключает)
-  const [allMode, setAllMode] = useState<"list" | "calendar">("list");
+  // Вид экрана «Все»: список, календарь или доска (Shift+V переключает по кругу)
+  const [allMode, setAllMode] = useState<AllMode>("list");
+  // Задача, чья карточка открыта в окне поверх экрана (доска, сообщение «добавлена в …»)
+  const [windowTaskId, setWindowTaskId] = useState<string | null>(null);
 
   // Горячие клавиши. Ctrl+K (Cmd+K) работает везде, остальные — только вне полей ввода и окон.
   // Буквы — по физической клавише (event.code), поэтому работают и в русской раскладке; «?» — по символу.
@@ -73,18 +76,23 @@ export function AppShell() {
       const typing = target?.closest("input, textarea, select, [contenteditable='true']") != null;
       // Esc закрывает сообщение внизу экрана (окна закрываются сами — браузером). В поле ввода Esc
       // отменяет правку, и сообщение (например, с «Отменить») остаётся
-      if (e.key === "Escape" && toast && !typing && !paletteOpen && !helpOpen && quickAdd === null) {
+      // Окно карточки открыто, только пока задача существует (её могли удалить, например, в другой вкладке)
+      const windowOpen = paletteOpen || helpOpen || quickAdd !== null || data.tasks.some((t) => t.id === windowTaskId);
+      if (e.key === "Escape" && toast && !typing && !windowOpen) {
         setToast(null);
         return;
       }
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.code === "KeyK") {
         e.preventDefault();
+        // Поле карточки сохраняет правку при потере фокуса — снимаем фокус до того, как окно закроется
+        if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
         setQuickAdd(null);
         setHelpOpen(false);
+        setWindowTaskId(null);
         setPaletteOpen(true);
         return;
       }
-      if (typing || paletteOpen || helpOpen || quickAdd !== null || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (typing || windowOpen || e.ctrlKey || e.metaKey || e.altKey) return;
       if (e.key === "?") {
         e.preventDefault();
         setHelpOpen(true);
@@ -109,8 +117,10 @@ export function AppShell() {
           setQuickAdd({ text: "" });
           break;
         case "KeyV":
-          if (selection.kind === "all") setAllMode(allMode === "list" ? "calendar" : "list");
-          else setToast({ kind: "info", text: "Список и календарь переключаются на экране «Все»." });
+          if (selection.kind === "all") {
+            const i = ALL_MODES.findIndex((m) => m.mode === allMode);
+            setAllMode(ALL_MODES[(i + 1) % ALL_MODES.length].mode);
+          } else setToast({ kind: "info", text: "Список, календарь и доска переключаются на экране «Все»." });
           break;
         case "KeyX":
           if (!task) needTask();
@@ -169,6 +179,7 @@ export function AppShell() {
     setOpenTask(null);
     setNav(null);
     setLastTaskId(null);
+    setWindowTaskId(null);
   };
 
   const appUi = {
@@ -205,7 +216,22 @@ export function AppShell() {
       setOpenTask({ id: task.id, done: task.status === "done" });
       setNav({ id: task.id, seq: (nav?.seq ?? 0) + 1 });
     },
+    // Карточка в окне. Если та же задача раскрыта в списке под окном — сворачиваем её там,
+    // чтобы одну задачу не правили в двух карточках сразу
+    openInWindow: (taskId: string) => {
+      const task = data.tasks.find((t) => t.id === taskId);
+      if (!task) {
+        setToast({ kind: "info", text: "Этой задачи больше нет — её удалили." });
+        return;
+      }
+      setWindowTaskId(taskId);
+      setOpenTask((o) => (o && o.id === taskId ? null : o));
+      setLastTaskId(null);
+    },
   };
+  const windowTask = windowTaskId === null ? undefined : data.tasks.find((t) => t.id === windowTaskId);
+  // Доска на всю ширину основной области, остальные экраны — не шире 768 px
+  const wide = current.kind === "all" && allMode === "board";
 
   return (
     // Любой клик или клавиша — действие пользователя: после него браузер разрешит звук напоминания
@@ -246,7 +272,7 @@ export function AppShell() {
       </aside>
 
       <main className="min-w-0 flex-1 p-4 md:p-8">
-        <div className="mx-auto max-w-3xl space-y-4">
+        <div className={`mx-auto space-y-4 ${wide ? "" : "max-w-3xl"}`}>
           {notice && (
             <div role="alert" className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
               <div className="flex-1 space-y-2">
@@ -271,7 +297,8 @@ export function AppShell() {
             </div>
           )}
           <TimerEffects data={data} />
-          <StopPromptBanner data={data} />
+          {/* Пока открыта карточка в окне, уведомление показывается в окне */}
+          {windowTask === undefined && <StopPromptBanner data={data} />}
           {goal ? (
             <GoalView key={goal.id} data={data} goal={goal} onSelect={select} />
           ) : project ? (
@@ -306,6 +333,7 @@ export function AppShell() {
             autoFocus
             initialText={quickAdd?.text ?? ""}
             onAdded={() => setQuickAdd(null)}
+            alwaysNotify
           />
         </div>
       </Dialog>
@@ -321,6 +349,24 @@ export function AppShell() {
       </Dialog>
       <Dialog open={helpOpen} onClose={() => setHelpOpen(false)} label="Горячие клавиши">
         <KeyboardHelp />
+      </Dialog>
+      {/* Карточка задачи в окне. Окно закрывается само, если задачу удалили.
+          Связанная задача открывается в этом же окне, а не переходом на её экран. */}
+      <Dialog
+        open={windowTask !== undefined}
+        onClose={() => setWindowTaskId(null)}
+        label={windowTask ? `Задача «${windowTask.title}»` : "Задача"}
+        size="mt-[6vh] max-h-[88vh] w-[min(42rem,calc(100%-2rem))] overflow-y-auto"
+      >
+        {windowTask && (
+          <TaskUiContext value={{ ...taskUi, goToTask: taskUi.openInWindow }}>
+            {/* Уведомление «таймер остановлен» / «сменить статус?» показываем в окне: страница под окном недоступна */}
+            <div className="space-y-4">
+              <StopPromptBanner data={data} />
+              <TaskEditor key={windowTask.id} task={windowTask} data={data} onClose={() => setWindowTaskId(null)} inWindow />
+            </div>
+          </TaskUiContext>
+        )}
       </Dialog>
     </div>
     </TaskUiContext>

@@ -59,6 +59,7 @@ export function QuickAdd({
   autoFocus,
   initialText = "",
   onAdded,
+  alwaysNotify = false,
 }: {
   data: AppData;
   // Куда попадает задача без @ — открытая цель или проект, иначе «Неразобранные»
@@ -67,6 +68,8 @@ export function QuickAdd({
   autoFocus?: boolean;
   initialText?: string;
   onAdded?: () => void;
+  // Сообщение «добавлена в …» всегда (окно Shift+N закрывается — без сообщения не видно, что задача создана)
+  alwaysNotify?: boolean;
 }) {
   const { notify } = useAppUi();
   const listId = useId();
@@ -167,8 +170,9 @@ export function QuickAdd({
     if (errors.length > 0) return;
     const id = addTask(draft.title, target, { tags, priority: draft.priority, deadline: draft.deadline, weight: draft.weight });
     if (!id) return;
-    // Задача ушла не туда, где пользователь сейчас, — сообщаем и даём перейти к ней или в пространство
-    if (!sameParent(target, defaultParent)) {
+    // Задача ушла не туда, где пользователь сейчас (или ввод был в окне), — сообщаем и даём открыть её
+    // или перейти в пространство
+    if (alwaysNotify || !sameParent(target, defaultParent)) {
       const s = spaceOf(data, target);
       notify({ kind: "added", taskId: id, title: draft.title, space: s.selection, spaceLabel: s.label });
     }

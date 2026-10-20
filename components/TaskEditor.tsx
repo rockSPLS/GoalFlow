@@ -71,7 +71,8 @@ function parseParent(value: string): Parent {
   return { kind: "inbox" };
 }
 
-export function TaskEditor({ task, data, onClose }: { task: Task; data: AppData; onClose: () => void }) {
+// inWindow — карточка в окне поверх экрана: рамку и фон даёт само окно
+export function TaskEditor({ task, data, onClose, inWindow = false }: { task: Task; data: AppData; onClose: () => void; inWindow?: boolean }) {
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description);
   const [openField, setOpenField] = useState<Field | null>(null);
@@ -109,7 +110,7 @@ export function TaskEditor({ task, data, onClose }: { task: Task; data: AppData;
   const deadline = deadlineState(task, todayKey());
 
   return (
-    <div className="mx-2 mb-2 space-y-4 rounded-lg border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900/50">
+    <div className={inWindow ? "space-y-4" : "mx-2 mb-2 space-y-4 rounded-lg border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900/50"}>
       <div className="space-y-2">
         <div className="flex items-start gap-2">
           <input
@@ -255,26 +256,39 @@ export function TaskEditor({ task, data, onClose }: { task: Task; data: AppData;
           </div>
         )}
 
-        <div className="flex flex-wrap gap-1" role="group" aria-label="Поля задачи">
-          {FIELDS.map(({ field, label, Icon }) => (
-            <button
-              key={field}
-              type="button"
-              onClick={() => toggleField(field)}
-              aria-expanded={openField === field}
-              aria-label={filled[field] ? `${label} (заполнено)` : label}
-              title={label}
-              className={`flex size-9 items-center justify-center rounded-md ${
-                openField === field
-                  ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-200"
-                  : filled[field]
-                    ? "text-indigo-600 hover:bg-zinc-200 dark:text-indigo-400 dark:hover:bg-zinc-800"
-                    : "text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800"
-              }`}
-            >
-              <Icon size={18} aria-hidden="true" />
-            </button>
-          ))}
+        {/* Ряд иконок полей; справа — удаление задачи */}
+        <div className="flex flex-wrap items-center justify-between gap-1">
+          <div className="flex flex-wrap gap-1" role="group" aria-label="Поля задачи">
+            {FIELDS.map(({ field, label, Icon }) => (
+              <button
+                key={field}
+                type="button"
+                onClick={() => toggleField(field)}
+                aria-expanded={openField === field}
+                aria-label={filled[field] ? `${label} (заполнено)` : label}
+                title={label}
+                className={`flex size-9 items-center justify-center rounded-md ${
+                  openField === field
+                    ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-200"
+                    : filled[field]
+                      ? "text-indigo-600 hover:bg-zinc-200 dark:text-indigo-400 dark:hover:bg-zinc-800"
+                      : "text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+                }`}
+              >
+                <Icon size={18} aria-hidden="true" />
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              if (window.confirm(`Удалить задачу «${task.title}»?`)) deleteTask(task.id);
+            }}
+            className="ml-auto flex items-center gap-1 rounded-md px-2 py-1 text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
+          >
+            <Trash size={16} aria-hidden="true" />
+            Удалить задачу
+          </button>
         </div>
 
         {/* Раскрытое поле — в отдельной рамке, чтобы не сливалось с иконками и плашками */}
@@ -289,17 +303,6 @@ export function TaskEditor({ task, data, onClose }: { task: Task; data: AppData;
           </div>
         )}
       </div>
-
-      <button
-        type="button"
-        onClick={() => {
-          if (window.confirm(`Удалить задачу «${task.title}»?`)) deleteTask(task.id);
-        }}
-        className="flex items-center gap-1 rounded-md px-2 py-1 text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
-      >
-        <Trash size={16} aria-hidden="true" />
-        Удалить задачу
-      </button>
     </div>
   );
 }
@@ -506,6 +509,9 @@ function TagsField({ task, data }: { task: Task; data: AppData }) {
                   e.preventDefault();
                   removeFromLibrary(options[activeIndex].tag);
                 } else if (e.key === "Escape" && shown) {
+                  // Esc закрывает только подсказки, а не окно с карточкой
+                  e.preventDefault();
+                  e.stopPropagation();
                   setOpen(false);
                   setActive(-1);
                 }

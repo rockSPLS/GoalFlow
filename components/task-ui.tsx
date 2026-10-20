@@ -19,6 +19,8 @@ export type TaskUi = {
   goToTask: (taskId: string) => void;
   // Статус поменяли не из карточки — карточка этой задачи (если открыта) остаётся открытой
   syncOpen: (taskId: string, done: boolean) => void;
+  // Карточка задачи в окне поверх текущего экрана (доска, сообщение «добавлена в …») — экран не меняется
+  openInWindow: (taskId: string) => void;
   nav: TaskNav;
 };
 
@@ -27,6 +29,7 @@ export const TaskUiContext = createContext<TaskUi>({
   toggleTask: () => {},
   goToTask: () => {},
   syncOpen: () => {},
+  openInWindow: () => {},
   nav: null,
 });
 

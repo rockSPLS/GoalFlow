@@ -1,13 +1,12 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { ChevronLeft, ChevronRight, GripVertical } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import {
   DndContext,
   DragOverlay,
   MouseSensor,
   TouchSensor,
-  useDraggable,
   useDroppable,
   useSensor,
   useSensors,
@@ -19,6 +18,7 @@ import type { AppData, Task } from "@/lib/model";
 import { deadlineState, todayKey } from "@/lib/filters";
 import { setTaskDeadline } from "@/lib/store";
 import { addDays, formatDay, formatMonth, formatWeekday, startOfWeek, toDateInputValue } from "@/lib/time";
+import { DragHandle } from "./DragHandle";
 import { TaskRow } from "./TaskList";
 
 // Календарь: компактный месяц (в клетке — число задач) и список задач выбранного дня с параметрами.
@@ -52,28 +52,11 @@ function byOrder(a: Task, b: Task) {
 const dayOf = (key: string) => new Date(`${key}T12:00:00`);
 const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
-// Ручка перетаскивания. Перетаскивание — мышью и касанием; с клавиатуры дедлайн меняется в карточке,
-// поэтому ручка не попадает в порядок перехода по Tab и скрыта от экранного диктора
-function DragHandle({ task }: { task: Task }) {
-  const { listeners, setNodeRef } = useDraggable({ id: task.id });
-  return (
-    <span
-      ref={setNodeRef}
-      {...listeners}
-      aria-hidden="true"
-      title="Перетащите на день в календаре"
-      className="-ml-1 flex shrink-0 cursor-grab touch-none items-center self-stretch px-0.5 text-zinc-400 hover:text-zinc-700 active:cursor-grabbing dark:hover:text-zinc-200"
-    >
-      <GripVertical size={16} />
-    </span>
-  );
-}
-
 function TaskRows({ tasks, data }: { tasks: Task[]; data: AppData }) {
   return (
     <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
       {tasks.map((task) => (
-        <TaskRow key={task.id} task={task} data={data} showPath dragHandle={<DragHandle task={task} />} />
+        <TaskRow key={task.id} task={task} data={data} showPath dragHandle={<DragHandle id={task.id} title="Перетащите на день в календаре" />} />
       ))}
     </ul>
   );
@@ -287,7 +270,9 @@ export function CalendarView({ tasks, data }: { tasks: Task[]; data: AppData }) 
 
         <NoDeadlineSection tasks={noDeadline} data={data} />
       </div>
-      <DragOverlay>
+      {/* Без анимации возврата: иначе после броска плашка ещё летит к старому месту ручки,
+          хотя задача уже в другом дне */}
+      <DragOverlay dropAnimation={null}>
         {dragging && (
           <div className="w-max max-w-64 cursor-grabbing truncate rounded-md border border-indigo-300 bg-white px-2 py-1 text-sm shadow-md dark:border-indigo-700 dark:bg-zinc-900">
             {dragging.title}

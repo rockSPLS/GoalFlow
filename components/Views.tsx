@@ -13,6 +13,7 @@ import {
   setProjectGoal,
 } from "@/lib/store";
 import { formatMinutes, minutesForTasks } from "@/lib/time";
+import { BoardView } from "./BoardView";
 import { CalendarView } from "./CalendarView";
 import { Collections } from "./Collections";
 import { FilterPanel } from "./FilterPanel";
@@ -61,8 +62,16 @@ function modeClass(active: boolean) {
   }`;
 }
 
-// Все задачи одним списком или календарём; у каждой видно, где она лежит.
-// Условия фильтра действуют и на список, и на календарь; готовая или сохранённая подборка — те же условия под именем.
+// Вид экрана «Все»; Shift+V переключает по кругу в этом порядке
+export const ALL_MODES = [
+  { mode: "list", label: "Список" },
+  { mode: "calendar", label: "Календарь" },
+  { mode: "board", label: "Доска" },
+] as const;
+export type AllMode = (typeof ALL_MODES)[number]["mode"];
+
+// Все задачи списком, календарём или доской; у каждой видно, где она лежит.
+// Условия фильтра действуют на все виды; готовая или сохранённая подборка — те же условия под именем.
 export function AllTasksView({
   data,
   filter,
@@ -73,9 +82,9 @@ export function AllTasksView({
   data: AppData;
   filter: TaskFilter;
   onFilter: (f: TaskFilter) => void;
-  // Список или календарь; хранится в AppShell, чтобы его переключала и клавиша Shift+V
-  mode: "list" | "calendar";
-  onMode: (mode: "list" | "calendar") => void;
+  // Вид хранится в AppShell, чтобы его переключала и клавиша Shift+V
+  mode: AllMode;
+  onMode: (mode: AllMode) => void;
 }) {
   const setMode = onMode;
   const tasks = filterTasks(data, data.tasks, filter, todayKey());
@@ -90,13 +99,12 @@ export function AllTasksView({
             {viewName ? "Задачи по условиям подборки." : "Задачи из всех целей и проектов."} Новая задача отсюда попадает в «Неразобранные».
           </p>
         </div>
-        <div role="group" aria-label="Вид списка" className="flex overflow-hidden rounded-md border border-zinc-300 dark:border-zinc-700">
-          <button type="button" aria-pressed={mode === "list"} onClick={() => setMode("list")} className={modeClass(mode === "list")}>
-            Список
-          </button>
-          <button type="button" aria-pressed={mode === "calendar"} onClick={() => setMode("calendar")} className={modeClass(mode === "calendar")}>
-            Календарь
-          </button>
+        <div role="group" aria-label="Вид задач" className="flex overflow-hidden rounded-md border border-zinc-300 dark:border-zinc-700">
+          {ALL_MODES.map((m) => (
+            <button key={m.mode} type="button" aria-pressed={mode === m.mode} onClick={() => setMode(m.mode)} className={modeClass(mode === m.mode)}>
+              {m.label}
+            </button>
+          ))}
         </div>
       </div>
       <Collections data={data} filter={filter} onFilter={onFilter} />
@@ -110,8 +118,10 @@ export function AllTasksView({
           showPath
           doneOpen={filter.status.includes("done")}
         />
-      ) : (
+      ) : mode === "calendar" ? (
         <CalendarView tasks={tasks} data={data} />
+      ) : (
+        <BoardView tasks={tasks} data={data} doneOpen={filter.status.includes("done")} />
       )}
     </div>
   );
