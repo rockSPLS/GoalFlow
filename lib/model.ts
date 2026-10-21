@@ -56,6 +56,7 @@ export const RELATED_MAX = 50;
 export const VIEW_NAME_MAX = 60;
 export const VIEWS_MAX = 50;
 export const TAG_LIBRARY_MAX = 1000;
+export const PARENT_FILTER_MAX = 1000;
 
 const id = z.string().min(1).max(100);
 const title = z.string().trim().min(1).max(TITLE_MAX);
@@ -128,6 +129,9 @@ export const DEADLINE_FILTERS = ["overdue", "today", "week"] as const;
 // Условия фильтра задач. В каждом списке — «любое из выбранного», пустой список — условие не задано;
 // условия между собой складываются через «и».
 const taskFilterObject = z.object({
+  // Цель / проект: "inbox" — «Неразобранные», "goal:<id>" — цель вместе с задачами её проектов,
+  // "project:<id>" — проект. Поле появилось позже — у старых подборок пустой список
+  parents: z.array(z.string().min(1).max(120)).max(PARENT_FILTER_MAX).default([]),
   status: z.array(z.enum(STATUSES)).max(STATUSES.length).default([]),
   // "none" — задачи без приоритета
   priority: z.array(z.enum([...PRIORITIES, "none"])).max(PRIORITIES.length + 1).default([]),

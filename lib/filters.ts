@@ -8,6 +8,9 @@ export const EMPTY_FILTER: TaskFilter = taskFilterSchema.parse({});
 // «Застряли» — больше 4 часов затрат времени
 export const STUCK_MINUTES = 4 * 60;
 
+// Значение условия «Цель / проект» для «Неразобранных»
+export const INBOX_PARENT = "inbox";
+
 export type ReadyView = { id: string; name: string; filter: TaskFilter };
 
 export const READY_VIEWS: ReadyView[] = [
@@ -25,6 +28,7 @@ function sameSet(a: readonly string[], b: readonly string[]): boolean {
 
 export function sameFilter(a: TaskFilter, b: TaskFilter): boolean {
   return (
+    sameSet(a.parents, b.parents) &&
     sameSet(a.status, b.status) &&
     sameSet(a.priority, b.priority) &&
     sameSet(a.tags, b.tags) &&
@@ -61,7 +65,17 @@ export function filterTasks(data: AppData, tasks: Task[], f: TaskFilter, today: 
   const projectGoal = new Map(data.projects.map((p) => [p.id, p.goalId]));
   const minutes = new Map<string, number>();
   if (f.over4h) for (const e of data.timeEntries) minutes.set(e.taskId, (minutes.get(e.taskId) ?? 0) + e.minutes);
+  const parents = new Set(f.parents);
   return tasks.filter((t) => {
+    if (parents.size > 0) {
+      // Цель задачи — своя или цель её проекта: выбранная цель отбирает и задачи своих проектов
+      const goalId = t.projectId !== null ? (projectGoal.get(t.projectId) ?? null) : t.goalId;
+      const fits =
+        (t.projectId !== null && parents.has(`project:${t.projectId}`)) ||
+        (goalId !== null && parents.has(`goal:${goalId}`)) ||
+        (t.projectId === null && t.goalId === null && parents.has(INBOX_PARENT));
+      if (!fits) return false;
+    }
     if (f.status.length > 0 && !f.status.includes(t.status)) return false;
     if (f.priority.length > 0 && !f.priority.includes(t.priority ?? "none")) return false;
     if (f.tags.length > 0 && !t.tags.some((tg) => f.tags.some((ft) => sameTag(tg, ft)))) return false;
@@ -79,6 +93,22 @@ export function filterTasks(data: AppData, tasks: Task[], f: TaskFilter, today: 
     if (f.over4h && (minutes.get(t.id) ?? 0) <= STUCK_MINUTES) return false;
     return true;
   });
+}
+
+// Варианты условия «Цель / проект»: «Неразобранные», каждая цель и за ней её проекты («Цель: проект»),
+// затем проекты без цели. Значение, которого уже нет (цель или проект удалены), подписано «Удалённая цель»
+// или «Удалённый проект» — оно остаётся в подборке, но задач не отбирает.
+export function parentOptions(data: AppData, selected: readonly string[]): { value: string; label: string }[] {
+  const options = [{ value: INBOX_PARENT, label: "Неразобранные" }];
+  for (const g of data.goals) {
+    options.push({ value: `goal:${g.id}`, label: g.title });
+    for (const p of data.projects) if (p.goalId === g.id) options.push({ value: `project:${p.id}`, label: `${g.title}: ${p.title}` });
+  }
+  for (const p of data.projects) if (p.goalId === null) options.push({ value: `project:${p.id}`, label: p.title });
+  for (const v of selected) {
+    if (!options.some((o) => o.value === v)) options.push({ value: v, label: v.startsWith("goal:") ? "Удалённая цель" : "Удалённый проект" });
+  }
+  return options;
 }
 
 // Все теги — справочник и теги задач (каждый один раз), по алфавиту

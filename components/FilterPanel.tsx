@@ -2,13 +2,13 @@
 
 import { useState } from "react";
 import { DEADLINE_FILTERS, PRIORITIES, PRIORITY_LABELS, STATUSES, STATUS_LABELS, VIEW_NAME_MAX, type AppData, type TaskFilter } from "@/lib/model";
-import { allTags, EMPTY_FILTER, isEmptyFilter, READY_VIEWS, sameFilter } from "@/lib/filters";
+import { allTags, EMPTY_FILTER, isEmptyFilter, parentOptions, READY_VIEWS, sameFilter } from "@/lib/filters";
 import { addView } from "@/lib/store";
 import { MultiSelect } from "./MultiSelect";
 import { TextInput } from "./ui";
 
-// Панель условий на экране «Все»: статус, приоритет, теги, дедлайн (в каждом — несколько значений,
-// «любое из выбранных»), «без цели», «больше 4 ч». Любое сочетание можно сохранить как подборку.
+// Панель условий на экране «Все»: цель / проект, статус, приоритет, теги, дедлайн (в каждом — несколько
+// значений, «любое из выбранных»), «без цели», «больше 4 ч». Любое сочетание можно сохранить как подборку.
 
 const DEADLINE_LABELS: Record<(typeof DEADLINE_FILTERS)[number], string> = {
   overdue: "Просрочено",
@@ -39,6 +39,13 @@ export function FilterPanel({ data, filter, onFilter }: { data: AppData; filter:
   return (
     <div className="space-y-2 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
       <div className="flex flex-wrap items-end gap-3">
+        <MultiSelect
+          label="Цель / проект"
+          search
+          options={parentOptions(data, filter.parents)}
+          value={filter.parents}
+          onChange={(v) => set({ parents: v })}
+        />
         <MultiSelect
           label="Статус"
           options={STATUSES.map((st) => ({ value: st, label: STATUS_LABELS[st] }))}
